@@ -464,3 +464,20 @@ Consequência: o desvio é local e pode deixar a rota mais quebrada que o ideal;
 roda de novo depois do reparo. Uma batida em superfície horizontal (normal vertical) interrompe o
 reparo, porque desviar de lado não a resolve. Cobertura: `Phase2` ganhou um cenário com a reta
 roçando a quina de um pilar.
+
+## D-032 — Pouso de salto avança além do waypoint Jump; mobília do cenário 2 é alta demais para pular
+Data: 2026-09-20
+Contexto: dois achados de quem assistiu ao demo. (1) Cenário 3: ao saltar a mureta o NPC pousava
+um pouco além do waypoint `Jump` (o destino do salto, D-019), voltava até ele e só então seguia:
+uma "voltinha" perceptível. `_selectStartIndex` só avançava sobre waypoints `Walk` já ultrapassados.
+(2) Cenário 2: a mobília tinha 3 studs, e tanto a engine quanto a SmartPath saltavam por cima da
+mesa em vez de usar o corredor entre mesa e estante e a porta de 3 studs; o cenário não testava
+o que dizia testar.
+Decisão: (1) `_selectStartIndex` ganhou `afterLanding`; no pouso, um waypoint `Jump` que o agente
+já ultrapassou (produto escalar com o segmento seguinte) é dado como alcançado. (2) A mobília do
+cenário 2 passou a 6 a 8 studs (armário, estante, gabinete, cômoda), acima do que a engine pula.
+Motivo: (1) o destino do salto é um ponto de referência, não uma parada obrigatória. (2) um cenário
+de demonstração tem de exercitar a capacidade que nomeia.
+Consequência: (1) uma rota que termina num waypoint `Jump` continua sendo concluída pelo raio de
+chegada, que não mudou. (2) o cenário 2 pode passar a discriminar os dois lados, ou não; depende
+do que a engine faz com o corredor de 3.2 studs, e o próximo relatório diz.

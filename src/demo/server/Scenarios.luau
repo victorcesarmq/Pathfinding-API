@@ -115,24 +115,26 @@ local function buildCorridor(ctx: BuildContext)
 end
 
 -- ===== 2. Sala com porta estreita e mobília =====
--- Parede com uma porta de 3 studs; a frente da porta é um corredor de 3.2 studs entre uma mesa e
--- uma estante, e há mais mobília na sala do destino.
+-- Parede com uma porta de 3 studs; a frente da porta é um corredor de 3.2 studs entre um armário e
+-- uma estante (altos demais para pular), e há mais mobília na sala do destino.
 
 local function buildRoom(ctx: BuildContext)
 	arena(ctx)
 	block(ctx, "WallSouth", Vector3.new(0, 5, -11.75), Vector3.new(2, 10, 36.5)) -- z de -30 a 6.5
 	block(ctx, "WallNorth", Vector3.new(0, 5, 19.75), Vector3.new(2, 10, 20.5)) -- z de 9.5 a 30
-	local table1 = block(ctx, "Table", Vector3.new(-8, 1.5, 3.2), Vector3.new(8, 3, 6.4))
-	table1.Material = Enum.Material.Wood
-	table1.Color = Color3.fromRGB(150, 105, 60)
+	-- Mobília ALTA (6 a 8 studs): com 3 studs a engine e a SmartPath simplesmente pulavam por cima da
+	-- mesa (medido no demo), e o cenário deixava de testar a porta estreita.
+	local wardrobe = block(ctx, "Wardrobe", Vector3.new(-8, 3.5, 3.2), Vector3.new(8, 7, 6.4))
+	wardrobe.Material = Enum.Material.Wood
+	wardrobe.Color = Color3.fromRGB(150, 105, 60)
 	local shelf = block(ctx, "Bookshelf", Vector3.new(-8, 4, 11.8), Vector3.new(8, 8, 4.4))
 	shelf.Material = Enum.Material.Wood
 	shelf.Color = Color3.fromRGB(110, 75, 45)
-	local couch = block(ctx, "Couch", Vector3.new(8, 1.5, 14), Vector3.new(6, 3, 3))
-	couch.Color = Color3.fromRGB(120, 60, 60)
-	local table2 = block(ctx, "Table2", Vector3.new(6, 1.5, 3), Vector3.new(4, 3, 4))
-	table2.Material = Enum.Material.Wood
-	table2.Color = Color3.fromRGB(150, 105, 60)
+	local cabinet = block(ctx, "Cabinet", Vector3.new(8, 3.5, 14), Vector3.new(6, 7, 3))
+	cabinet.Color = Color3.fromRGB(120, 60, 60)
+	local dresser = block(ctx, "Dresser", Vector3.new(6, 3, 3), Vector3.new(4, 6, 4))
+	dresser.Material = Enum.Material.Wood
+	dresser.Color = Color3.fromRGB(150, 105, 60)
 	marker(ctx, "Goal", Vector3.new(45, 0, 8), Color3.fromRGB(80, 255, 120))
 end
 
@@ -269,7 +271,7 @@ Scenarios.list = {
 	{
 		id = 2,
 		name = "Sala com porta estreita e mobília",
-		description = "Porta de 3 studs precedida por um corredor de 3.2 entre mesa e estante.",
+		description = "Porta de 3 studs precedida por um corredor de 3.2 entre armário e estante (altos demais para pular).",
 		kind = "normal",
 		build = buildRoom,
 		start = Vector3.new(-45, 0, -15),

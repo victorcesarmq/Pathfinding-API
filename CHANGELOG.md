@@ -128,3 +128,5 @@ Formato: [Keep a Changelog](https://keepachangelog.com/). Versionamento semânti
 - Reparo de rota (D-031): quando nem o relaxamento resolve, `RouteSolver` insere waypoints de desvio
   onde o corpo bate; corrige rotas retas que roçam quinas de pilares (cenário 8 do demo).
   `Phase2` ganhou o teste "quina de pilar".
+- Ao pousar de um salto o agente não volta ao waypoint `Jump` que já ultrapassou (D-032). A mobília
+  do cenário 2 do demo passou a 6-8 studs (a de 3 era pulada).

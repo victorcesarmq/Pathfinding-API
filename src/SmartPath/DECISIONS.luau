@@ -332,4 +332,14 @@ validação de volume continua a última palavra. routeClear devolve também a n
 Motivo: mesmo caso de D-018, sem waypoint interior para empurrar.
 Consequência: o desvio é local, e o suavizador não roda de novo depois; batida em superfície
 horizontal interrompe o reparo.
+
+## D-032 — Pouso de salto avança além do waypoint Jump; mobília do cenário 2 alta
+Data: 2026-09-20
+Contexto: (1) no cenário 3 o NPC pousava além do waypoint Jump (destino do salto, D-019), voltava até
+ele e seguia: uma voltinha. (2) no cenário 2 a mobília de 3 studs era pulada por engine e SmartPath,
+em vez de usar o corredor e a porta.
+Decisão: _selectStartIndex ganhou afterLanding: no pouso, um waypoint Jump já ultrapassado é dado
+como alcançado. A mobília do cenário 2 passou a 6-8 studs.
+Motivo: o destino do salto é referência, não parada; o demo tem de exercitar o que nomeia.
+Consequência: o raio de chegada não mudou; o cenário 2 pode ou não discriminar os lados.
 ]]

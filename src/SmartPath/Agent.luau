@@ -825,7 +825,9 @@ function Agent._handleNoRoute(self: Agent, reason: string, details: { [string]: 
 	self:_fail(reason, details)
 end
 
-function Agent._selectStartIndex(self: Agent, wps: { Types.Waypoint }, hint: number): number
+-- `afterLanding`: chamado ao pousar de um salto. O waypoint Jump é o DESTINO do salto (D-019) e o
+-- agente costuma pousar um pouco além dele; se já passou dele, avança em vez de voltar até lá.
+function Agent._selectStartIndex(self: Agent, wps: { Types.Waypoint }, hint: number, afterLanding: boolean?): number
 	local rootPos = self.Root.Position
 	local from = math.max(1, hint)
 	local best, bestD = from, math.huge
@@ -835,9 +837,10 @@ function Agent._selectStartIndex(self: Agent, wps: { Types.Waypoint }, hint: num
 			best, bestD = i, d
 		end
 	end
-	-- se o mais próximo já ficou para trás (e é Walk), avança
+	-- se o mais próximo já ficou para trás (e é Walk, ou o destino de um salto que acabou de
+	-- acontecer), avança
 	local nxt = wps[best + 1]
-	if nxt and wps[best].Action == WALK then
+	if nxt and (wps[best].Action == WALK or (afterLanding and wps[best].Action == JUMP)) then
 		local seg = Util.flat(nxt.Position - wps[best].Position)
 		if seg.Magnitude > 1e-3 and Util.flat(rootPos - wps[best].Position):Dot(seg) > 0 then
 			best += 1
@@ -985,7 +988,7 @@ function Agent._stepAirborne(self: Agent)
 		self._jumpPlan = nil
 		self._stuck.lastPos = nil
 		if self._route then
-			self._index = self:_selectStartIndex(self._route, self._index)
+			self._index = self:_selectStartIndex(self._route, self._index, true)
 		end
 	elseif elapsed > MAX_AIR_TIME then
 		self._state = "Following"
