@@ -2928,6 +2928,31 @@ local function lowestMemoryKb(readings: number): number
 	return lowest
 end
 
+-- Quantos dos agentes guardados (por referência fraca) ainda existem depois do coletor. Cada leitura
+-- de memória do Lua (gcinfo) varia alguns MB conforme o ponto do ciclo do coletor em que cai, então
+-- ela não serve de critério (a mesma corrida deu -2 MB e +4.9 MB); reter agentes, que é o vazamento
+-- que importa, aparece aqui como ~500 sobreviventes. Gera lixo a cada passo para o coletor andar.
+local function survivorsAfterCollection(weak: { [number]: any }, total: number, tolerated: number): number
+	local function count(): number
+		local n = 0
+		for i = 1, total do
+			if weak[i] ~= nil then
+				n += 1
+			end
+		end
+		return n
+	end
+	waitUntil(function()
+		return count() <= tolerated
+	end, 30, function()
+		local garbage = {}
+		for i = 1, 2000 do
+			garbage[i] = { i }
+		end
+	end)
+	return count()
+end
+
 local function testLeak500(): boolean
 	local area = newArea()
 	flatArena(area)
@@ -2943,8 +2968,11 @@ local function testLeak500(): boolean
 	local instancesBefore = instanceCount()
 	local mbBefore = StatsService:GetTotalMemoryUsageMb()
 
-	for i = 1, 500 do
+	local total = 500
+	local weak: { [number]: any } = setmetatable({}, { __mode = "v" }) :: any
+	for i = 1, total do
 		local agent = SmartPath.new(rig, baseOptions() :: any)
+		weak[i] = agent
 		if i % 4 == 0 then
 			agent:MoveTo(goal) -- destruir com um cálculo de rota em andamento
 			task.wait()
@@ -2954,11 +2982,14 @@ local function testLeak500(): boolean
 			task.wait(0.1)
 		end
 	end
+	-- o registro guarda o agente mais recente do Humanoid; criar e destruir mais um solta o anterior
+	SmartPath.new(rig, baseOptions() :: any):Destroy()
 	-- deixa terminar os cálculos pendentes dos agentes já destruídos
 	waitUntil(function()
 		return SmartPath.Scheduler.getQueueLength() == 0
 	end, 20)
 	task.wait(1)
+	local survivors = survivorsAfterCollection(weak, total, 3)
 	local memAfter = lowestMemoryKb(6)
 	local instancesAfter = instanceCount()
 	local mbAfter = StatsService:GetTotalMemoryUsageMb()
@@ -2966,9 +2997,11 @@ local function testLeak500(): boolean
 	local growthKb = memAfter - memBefore
 	return report(
 		"Fase 8: criar e destruir 500 agentes (parte deles com cálculo em andamento) não vaza",
-		growthKb < 1536 and instancesAfter - instancesBefore <= 5 and queue == 0,
+		survivors <= 3 and growthKb < 20480 and instancesAfter - instancesBefore <= 5 and queue == 0,
 		string.format(
-			"memória do Lua %.0f -> %.0f KB (%+.0f KB); memória total %.1f -> %.1f MB; instâncias %d -> %d; fila do Scheduler %d",
+			"agentes ainda vivos depois do coletor: %d de %d; memória do Lua %.0f -> %.0f KB (%+.0f KB, só limite grosseiro de 20 MB: varia com o coletor); memória total %.1f -> %.1f MB; instâncias %d -> %d; fila do Scheduler %d",
+			survivors,
+			total,
 			memBefore,
 			memAfter,
 			growthKb,
