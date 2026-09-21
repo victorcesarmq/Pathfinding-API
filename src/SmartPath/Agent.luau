@@ -79,6 +79,12 @@ local START_INDEX_LOOKAHEAD = 5
 local JUMP_LINK_LABEL = "JumpLink" -- Label de PathfindingLink tratado como salto (v2)
 local DEBUG_LIFETIME = 6
 local LOAD_TIMEOUT = 5 -- espera por Humanoid/HumanoidRootPart de um personagem ainda carregando
+-- Curvas (Stability.Curves, D-035): o agente mira num ponto adiante NA ROTA, em vez de virar de uma vez
+-- em cada canto. A distância é WalkSpeed x este tempo, limitada; [VALIDAR] no rig do jogo.
+local CURVE_LOOKAHEAD_TIME = 0.3
+local CURVE_MIN_LOOKAHEAD = 3
+local CURVE_MAX_LOOKAHEAD = 8
+local CURVE_VALIDATE_ATTEMPTS = 3 -- quantas vezes a distância é reduzida à metade até o corpo caber
 -- Endurecimento (Fase 8, D-033)
 -- Personagem removido do jogo: o agente falha com character_lost e se destrói depois deste atraso, para
 -- que os handlers de Failed rodem antes (o BindableEvent entrega no ciclo seguinte).
@@ -174,6 +180,8 @@ type AgentData = {
 	_lastCalcTime: number?,
 	_lastDetails: { [string]: any }?,
 	_lastFailure: { reason: string, details: { [string]: any } }?,
+	_curveLimit: number,
+	_lastCurveCheck: number,
 }
 
 export type Agent = typeof(setmetatable({} :: AgentData, Agent))
@@ -274,6 +282,8 @@ function Agent.new(characterOrHumanoid: Types.CharacterLike, options: Types.Opti
 			_lastCalcTime = nil,
 			_lastDetails = nil,
 			_lastFailure = nil,
+			_curveLimit = math.huge,
+			_lastCurveCheck = 0,
 		}, Agent) :: any
 	) :: Agent
 
@@ -747,6 +757,7 @@ function Agent._adoptRoute(self: Agent, wps: { Types.Waypoint }, details: { [str
 	self._forceAdopt = false
 	self._route = wps
 	self._lastDetails = details
+	self._curveLimit = math.huge
 	self._maxRouteLen = math.max(self._maxRouteLen, newLen)
 	self._routeFromSolver = true
 	self._blockedRetryUntil = 0
@@ -937,6 +948,79 @@ function Agent._step(self: Agent)
 	end
 end
 
+-- ===== Curvas (Stability.Curves, D-035) =====
+
+-- Um waypoint "duro" precisa ser alcançado de verdade: o que antecede um salto ou um link (a decolagem é
+-- feita ali), o próprio Jump/Custom, e o último. Os demais ("macios") podem ser cortados em curva.
+local function isHardWaypoint(wps: { Types.Waypoint }, i: number): boolean
+	local wp, nxt = wps[i], wps[i + 1]
+	return wp.Action ~= WALK or nxt == nil or nxt.Action ~= WALK
+end
+
+-- O agente já passou de um waypoint macio: está além dele, na direção do segmento seguinte.
+local function passedSoftWaypoint(wps: { Types.Waypoint }, i: number, rootPos: Vector3): boolean
+	if isHardWaypoint(wps, i) then
+		return false
+	end
+	local seg = Util.flat(wps[i + 1].Position - wps[i].Position)
+	return seg.Magnitude > 1e-3 and Util.flat(rootPos - wps[i].Position):Dot(seg) > 0
+end
+
+-- Ponto a `distance` studs adiante na poligonal [rootPos, waypoints...], parando no primeiro waypoint
+-- duro (nunca passa dele).
+local function pointAlongRoute(wps: { Types.Waypoint }, index: number, rootPos: Vector3, distance: number): Vector3
+	local remaining = distance
+	local from = rootPos
+	local i = index
+	while true do
+		local wp = wps[i]
+		local len = Util.flat(wp.Position - from).Magnitude
+		if len >= remaining or isHardWaypoint(wps, i) or not wps[i + 1] then
+			if len < 1e-3 then
+				return wp.Position
+			end
+			return from:Lerp(wp.Position, math.min(remaining, len) / len)
+		end
+		remaining -= len
+		from = wp.Position
+		i += 1
+	end
+end
+
+-- Para onde o agente mira. Sem Curves é o waypoint atual (comportamento de sempre). Com Curves, um
+-- ponto adiante na rota, na maior distância (até o máximo) em que o corpo ainda cabe na reta até ele:
+-- a validação é a mesma varredura de volume da rota, refeita a cada PROBE_INTERVAL.
+function Agent._aimPoint(self: Agent, wps: { Types.Waypoint }, rootPos: Vector3): Vector3
+	local wp = wps[self._index]
+	if not self.Options.Stability.Curves then
+		return wp.Position
+	end
+	local now = os.clock()
+	local wanted = math.clamp(self.Humanoid.WalkSpeed * CURVE_LOOKAHEAD_TIME, CURVE_MIN_LOOKAHEAD, CURVE_MAX_LOOKAHEAD)
+	if now - self._lastCurveCheck >= PROBE_INTERVAL then
+		self._lastCurveCheck = now
+		local bodyRadius = Util.getBodyRadius(self.Options.Agent.Radius)
+		local origin = Vector3.new(rootPos.X, Util.getFeetY(self.Humanoid, self.Root) + 2.5, rootPos.Z)
+		local distance = wanted
+		local fits = false
+		for _ = 1, CURVE_VALIDATE_ATTEMPTS do
+			local aim = pointAlongRoute(wps, self._index, rootPos, distance)
+			local delta = Vector3.new(aim.X - origin.X, 0, aim.Z - origin.Z)
+			if delta.Magnitude < 1e-3 or not workspace:Spherecast(origin, bodyRadius, delta, self:_getParams()) then
+				fits = true
+				break
+			end
+			distance /= 2
+		end
+		self._curveLimit = if fits then distance else 0
+	end
+	local distance = math.min(wanted, self._curveLimit)
+	if distance <= 0 then
+		return wp.Position
+	end
+	return pointAlongRoute(wps, self._index, rootPos, distance)
+end
+
 function Agent._stepFollowing(self: Agent)
 	local wps = self._route
 	if not wps then
@@ -953,7 +1037,10 @@ function Agent._stepFollowing(self: Agent)
 	if self._index == #wps and typeof(self._target) == "Instance" then
 		arriveRadius = TARGET_STOP_DISTANCE -- perseguindo um alvo: não empurra o corpo dele
 	end
-	if Util.flat(wp.Position - rootPos).Magnitude <= arriveRadius then
+	if
+		Util.flat(wp.Position - rootPos).Magnitude <= arriveRadius
+		or (self.Options.Stability.Curves and passedSoftWaypoint(wps, self._index, rootPos))
+	then
 		local nextWp = wps[self._index + 1]
 		if nextWp and nextWp.Action == JUMP and self.Options.Jump.Enabled then
 			-- o waypoint Jump é o destino do salto (D-019): decola daqui, do waypoint anterior.
@@ -975,7 +1062,8 @@ function Agent._stepFollowing(self: Agent)
 		end
 	end
 
-	local dir = Util.flat(wp.Position - rootPos)
+	local aim = self:_aimPoint(wps, rootPos) -- sem Curves, é o próprio waypoint
+	local dir = Util.flat(aim - rootPos)
 	if dir.Magnitude > 1e-3 then
 		self.Humanoid:Move(dir.Unit, false)
 	end
@@ -985,7 +1073,7 @@ function Agent._stepFollowing(self: Agent)
 		local now = os.clock()
 		if now - self._lastProbe >= PROBE_INTERVAL then
 			self._lastProbe = now
-			local plan = self:_analyzeToward(wp.Position)
+			local plan = self:_analyzeToward(aim)
 			if plan and Predictor.wallDistance(plan, rootPos) <= plan.takeoffDistance then
 				if self:_executeJump(plan.jumpHeight, plan.direction, plan.landingPoint, plan) then
 					return

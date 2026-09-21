@@ -23,7 +23,7 @@ local Debug = require(script.Debug)
 
 local SmartPath = {}
 
-SmartPath.Version = "0.1.0"
+SmartPath.Version = "1.0.0"
 
 -- ===== Nível 2 — peças soltas (Seção 3.3) =====
 SmartPath.Predictor = Predictor

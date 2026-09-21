@@ -53,7 +53,7 @@ function RouteCache.quantize(v: Vector3, cell: number): string
 end
 
 function RouteCache.new(config: Config?): RouteCache
-	local cfg = config or {}
+	local cfg: Config = config or {}
 	return setmetatable({
 		_cell = cfg.CellSize or RouteCache.DEFAULT_CELL_SIZE,
 		_ttl = cfg.TTL or DEFAULT_TTL,

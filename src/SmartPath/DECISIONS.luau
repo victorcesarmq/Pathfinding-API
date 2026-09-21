@@ -355,4 +355,25 @@ dá erro claro se já existe agente para o Humanoid e MoveTo reaproveita; no cli
 StreamingEnabled pede RequestStreamAroundAsync antes de rotas longas [VALIDAR].
 Motivo: cada caso passa a ter resultado previsível e teste.
 Consequência: Config.resolve devolve Jump.Enabled = false para quem não salta, salvo pedido explícito.
+
+## D-034 — Empacotamento da 1.0: idioma, licença, projetos Rojo
+Data: 2026-09-21
+Contexto: a Fase 9 pede README, API, CHANGELOG, wally.toml e default.project.json.
+Decisão: documentação em português (o mesmo do explain); licença MIT; o default.project.json monta
+só a biblioteca (o Wally o exige) e o antigo, com testes, virou dev.project.json; wally.toml com o
+escopo "seu-usuario" para trocar; GIFs, Creator Store, Wally, GitHub e tag ficam com o dono
+(docs/PUBLISHING.md).
+Motivo: o README não pode prometer o que a biblioteca não faz; a seção de limitações traz o medido.
+Consequência: rojo serve dev.project.json para os testes.
+
+## D-035 — Trajetória em curva opcional (Stability.Curves)
+Data: 2026-09-21
+Contexto: o agente anda reto até cada waypoint e vira de uma vez no canto; o usuário pediu curvas sem
+alterar o funcionamento existente.
+Decisão: campo aditivo Stability.Curves (padrão false). Ligado, o agente mira num ponto adiante na
+rota (WalkSpeed x 0.3 studs, entre 3 e 8), que para no primeiro waypoint duro (antes de salto/link, o
+Jump/Custom e o último); a distância é validada por Spherecast do corpo e cai para o waypoint se não
+cabe. Um waypoint macio conta como alcançado quando o agente passa dele. Desligado, nada muda.
+Motivo: a menor mudança que dá trajetória suave sem tocar na rota, no cache nem na validação.
+Consequência: GetRoute e Debug seguem mostrando a poligonal; valores [VALIDAR].
 ]]

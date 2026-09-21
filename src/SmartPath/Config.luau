@@ -27,6 +27,7 @@ local Defaults: Types.Options = {
 		Cache = true,
 		Smoothing = true,
 		Hysteresis = 0.15,
+		Curves = false, -- desligado: quem não pede não muda de comportamento (D-035)
 	},
 	Geometry = {
 		AutoFilter = true,

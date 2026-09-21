@@ -2,7 +2,58 @@
 
 Formato: [Keep a Changelog](https://keepachangelog.com/). Versionamento semântico.
 
-## [Unreleased]
+## [1.0.0] - 2026-09-21
+
+Primeira versão pública.
+
+### Adicionado
+- **Três níveis de API.** Nível 0: `SmartPath.MoveTo`, `MoveToAsync` e `GetRoute` (uma linha, sem
+  configuração; raio, altura, velocidade e salto saem do `Humanoid`). Nível 1: `SmartPath.new`, um
+  agente persistente com `MoveTo`, `Await`, `Stop`, `SetSuspended`, `GetState`, `GetRoute`,
+  `SetOptions`, `Destroy` e os sinais `Reached`, `Failed`, `Blocked`, `Jumped` e `CustomWaypoint`.
+  Nível 2: `Predictor`, `Simplifier`, `Geometry`, `Scheduler`, `Errors`, `Debug`.
+- **`SmartPath.Service`**: espelha o `PathfindingService` (`CreatePath`, `ComputeAsync`, `Status`,
+  `GetWaypoints`, `Blocked`); um script clássico passa a usar a SmartPath trocando uma linha.
+- **Raio adaptativo** para ambientes fechados e **validação de toda rota** por `Spherecast` no raio
+  físico do corpo (0,6 × o raio do agente). Resgate de rotas que a engine leva coladas na parede:
+  relaxamento dos cantos e reparo por waypoints de desvio.
+- **Saltos por balística**: o `Predictor` usa o `JumpHeight` real (qualquer valor, não o limite fixo da
+  malha); atalho por salto, salto reativo e `JumpExecutor` (`Native` e `Injected`) com restauração à
+  prova de falha.
+- **Filtro de geometria invisível** (`PathfindingModifier.PassThrough`, tags `NavIgnore` e `NavSolid`,
+  `Geometry.audit()`), sem nunca alterar o mapa.
+- **Estabilização**: origem aterrada, cache por célula, string pulling seguro, histerese.
+- **Agendador central** (`Scheduler`) com orçamento por frame e coalescência de pedidos iguais.
+- **Trajetória em curva opcional** (`Stability.Curves`, desligada por padrão, D-035): o agente mira num ponto
+  adiante na rota em vez de virar de uma vez em cada canto, só onde o corpo cabe.
+- **Diagnóstico**: 10 códigos de erro com `details`, `SmartPath.explain` (frase legível em
+  português) e debug visual (waypoints por ação, decolagem, pouso, obstáculo, raio efetivo, rota
+  rejeitada, painel opcional). `Debug = false` não cria instância nem imprime.
+- **Endurecimento** (D-033): morte e remoção do personagem, `WalkSpeed` 0, sentado, `JumpHeight` 0,
+  `UseJumpPower`, R6 e R15, gravidade alterada, destino igual à posição, destino NaN ou distante, sem
+  chão sob o agente, dois agentes no mesmo personagem, `MoveTo` dentro de `Reached`.
+- **Place de demonstração** com 11 cenários (`PathfindingService` puro à esquerda, SmartPath à
+  direita), HUD, relatório e comandos de diagnóstico.
+- Documentação: [README](README.md), [API](docs/API.md), [decisões](DECISIONS.md) e
+  [backlog](BACKLOG.md). Empacotamento: `wally.toml`, `default.project.json` (só a biblioteca),
+  licença MIT.
+
+### Alterado
+- `default.project.json` agora monta só a biblioteca (é o que o Wally e o Creator Store empacotam).
+  O projeto de desenvolvimento (testes) passou para `dev.project.json`: use
+  `rojo serve dev.project.json`.
+- Pequenas limpezas de tipos sem mudança de comportamento (`RouteCache`, `Geometry`, `Scheduler`,
+  `RouteSolver`).
+
+### Limitações conhecidas
+Listadas no [README](README.md#limitações-o-que-a-smartpath-não-faz). As principais: não gera
+`PathfindingLink`, não faz evitação entre agentes, só reduz o raio (não a altura), o atalho por
+salto só vê obstáculos a até 10 studs, e o uso no cliente (jogador) e com `StreamingEnabled` ainda
+não foi validado num jogo real.
+
+---
+
+## Histórico de desenvolvimento (por fase, antes da 1.0.0)
 
 ### Added — Fase 0 (fundação e esqueleto)
 - Estrutura de módulos da SmartPath em `ReplicatedStorage.SmartPath` (Seção 4 do plano).

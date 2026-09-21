@@ -3166,4 +3166,387 @@ function Tests.Phase8Soak(minutes: number?): boolean
 	return ok
 end
 
+-- ===================== Curvas (Stability.Curves) =====================
+-- Uso: require(game.ServerStorage.SmartPathTests).Curves()
+-- A opção é aditiva e desligada por padrão (D-035): estes testes provam as duas coisas, que o padrão não
+-- mudou e que, ligada, a trajetória é mais suave sem quebrar saltos, corredores nem GetRoute.
+
+-- Curves(true) liga o Debug dos agentes (rota, raio, saltos) e desenha o rastro de cada trajetória, para
+-- VER a diferença. Sem o argumento, nada é desenhado.
+local curvesDebug = false
+
+local function curveOptions(extra: { [string]: any }?): { [string]: any }?
+	if not curvesDebug then
+		return extra
+	end
+	local merged: { [string]: any } = {}
+	for k, v in pairs(extra or {}) do
+		merged[k] = v
+	end
+	merged.Debug = true
+	return merged
+end
+
+-- pausa para olhar o resultado antes de o cenário ser apagado (só com o debug ligado)
+local function lookPause(seconds: number)
+	if curvesDebug then
+		task.wait(seconds)
+	end
+end
+
+-- Só com o debug ligado: redesenha a rota com vida longa. O Debug da biblioteca a desenha ao adotar a rota e a
+-- apaga em 6 s, e um teste dura mais que isso; sem esta chamada o rastro do NPC ficaria sem os nós da rota.
+local function showRoute(rig: Model, goal: Vector3)
+	if not curvesDebug then
+		return
+	end
+	local route = SmartPath.GetRoute(rig, goal, baseOptions() :: any)
+	if route then
+		SmartPath.Debug.route(route, 60)
+	end
+end
+
+-- Só com o debug ligado: desenha o rastro do NPC (um ponto a cada 0.1 s) enquanto ele anda. Devolve a função
+-- que para o desenho.
+local function startTrail(rig: Model, color: Color3): () -> ()
+	if not curvesDebug then
+		return function() end
+	end
+	local root = rootOf(rig)
+	local last = 0
+	local conn = RunService.Heartbeat:Connect(function()
+		local now = os.clock()
+		if now - last >= 0.1 then
+			last = now
+			SmartPath.Debug.point(root.Position - Vector3.new(0, 2.6, 0), color, 0.5, 60)
+		end
+	end)
+	return function()
+		conn:Disconnect()
+	end
+end
+
+-- Uma parede alta com a volta só por um lado: a rota tem dois cantos de ~65 graus.
+local function buildBendCourse(area: Folder): (Vector3, Vector3)
+	addFloor(area, "Floor", 0, 0, 120, 60)
+	addBlock(area, "Wall", Vector3.new(0, 5, -10), Vector3.new(2, 10, 40)) -- z de -30 a 10
+	return TEST_ORIGIN + Vector3.new(-25, 0, -18), TEST_ORIGIN + Vector3.new(25, 0, -18)
+end
+
+type Trace = {
+	reached: boolean,
+	failed: boolean,
+	maxTurn: number, -- maior mudança de direção entre amostras de 0.1 s (graus)
+	smoothTurn: number, -- o mesmo, com a direção medida em blocos de 0.4 s (menos sensível a ruído)
+	cornerCut: number, -- o quanto a trajetória se afasta, no máximo, dos cantos da rota (studs)
+	length: number,
+	seconds: number,
+	jumps: number,
+	trail: string,
+}
+
+local function flatVec(v: Vector3): Vector3
+	return Vector3.new(v.X, 0, v.Z)
+end
+
+-- Anda até `goal` amostrando a posição a cada 0.1 s. `route` (opcional) são os waypoints da rota, para medir
+-- o quanto a trajetória corta os cantos: para cada canto interior, a menor distância que o NPC chegou dele;
+-- `cornerCut` é a maior dessas. Uma trajetória reta passa a ~1 stud dos cantos (o raio de chegada é 1.25);
+-- uma trajetória em curva os corta, e fica mais longe.
+local function traceRun(
+	rig: Model,
+	goal: Vector3,
+	options: { [string]: any }?,
+	trail: Color3?,
+	route: { any }?
+): Trace
+	showRoute(rig, goal)
+	local agent = newAgent(rig, curveOptions(options))
+	local st = watch(agent)
+	local root = rootOf(rig)
+	local samples: { Vector3 } = { root.Position }
+	local last = os.clock()
+	local t0 = last
+	agent:MoveTo(goal)
+	waitUntil(function()
+		return st.reached > 0 or st.failed > 0
+	end, 60, function()
+		local now = os.clock()
+		if now - last >= 0.1 then
+			last = now
+			table.insert(samples, root.Position)
+			if curvesDebug and trail then
+				SmartPath.Debug.point(root.Position - Vector3.new(0, 2.6, 0), trail, 0.5, 40)
+			end
+		end
+	end)
+	local seconds = os.clock() - t0
+	agent:Destroy()
+
+	local maxTurn, length = 0, 0
+	local prevHeading: Vector3? = nil
+	local prevPos = samples[1]
+	local moving: { Vector3 } = { samples[1] }
+	for i = 2, #samples do
+		local d = flatVec(samples[i] - prevPos)
+		if d.Magnitude > 0.5 then
+			length += d.Magnitude
+			local heading = d.Unit
+			if prevHeading then
+				maxTurn = math.max(maxTurn, math.deg(math.acos(math.clamp(heading:Dot(prevHeading), -1, 1))))
+			end
+			prevHeading = heading
+			prevPos = samples[i]
+			table.insert(moving, samples[i])
+		end
+	end
+
+	-- direção em blocos de 0.4 s (4 amostras), com passo de 2
+	local smoothTurn = 0
+	local blockHeadings: { Vector3 } = {}
+	for i = 1, #moving - 4, 2 do
+		local d = flatVec(moving[i + 4] - moving[i])
+		if d.Magnitude > 1 then
+			table.insert(blockHeadings, d.Unit)
+		end
+	end
+	for i = 2, #blockHeadings do
+		smoothTurn = math.max(smoothTurn, math.deg(math.acos(math.clamp(blockHeadings[i]:Dot(blockHeadings[i - 1]), -1, 1))))
+	end
+
+	local cornerCut = 0
+	if route then
+		for i = 2, #route - 1 do
+			local nearest = math.huge
+			for _, sample in ipairs(samples) do
+				nearest = math.min(nearest, flatVec(sample - (route[i] :: any).Position).Magnitude)
+			end
+			cornerCut = math.max(cornerCut, nearest)
+		end
+	end
+
+	local parts = {}
+	for i, sample in ipairs(samples) do
+		if i % 2 == 1 then
+			table.insert(parts, string.format("(%.0f,%.0f)", sample.X - TEST_ORIGIN.X, sample.Z - TEST_ORIGIN.Z))
+		end
+	end
+	return {
+		reached = st.reached > 0,
+		failed = st.failed > 0,
+		maxTurn = maxTurn,
+		smoothTurn = smoothTurn,
+		cornerCut = cornerCut,
+		length = length,
+		seconds = seconds,
+		jumps = st.jumps,
+		trail = table.concat(parts, " "),
+	}
+end
+
+local function testCurvesDefaultOff(): boolean
+	local area = newArea()
+	addFloor(area, "Floor", 0, 0, 40, 40)
+	local rig = makeRig(area, TEST_ORIGIN)
+	local default = Config.resolve(rig).Stability.Curves
+	local explicitOff = Config.resolve(rig, { Stability = { Curves = false } } :: any).Stability.Curves
+	local on = Config.resolve(rig, { Stability = { Curves = true } } :: any).Stability.Curves
+	local partial = Config.resolve(rig, { Stability = { Cache = false } } :: any).Stability.Curves -- outro campo de Stability não liga
+	return report(
+		"Curvas: desligadas por padrão; só Stability.Curves = true as liga",
+		default == false and explicitOff == false and on == true and partial == false,
+		string.format("padrão %s, false %s, true %s, só outro campo de Stability %s", tostring(default), tostring(explicitOff), tostring(on), tostring(partial))
+	)
+end
+
+local function testCurvesSmoother(): boolean
+	local area = newArea()
+	local start, goal = buildBendCourse(area)
+	task.wait(NAVMESH_SETTLE)
+
+	local rigA = makeRig(area, start)
+	local route = SmartPath.GetRoute(rigA, goal, baseOptions() :: any)
+	local straight = traceRun(rigA, goal, nil, Color3.fromRGB(255, 70, 70), route) -- rastro vermelho: reta
+	rigA:Destroy()
+	task.wait(0.3)
+	local rigB = makeRig(area, start)
+	local curved = traceRun(rigB, goal, { Stability = { Curves = true } }, Color3.fromRGB(70, 255, 90), route) -- verde: curva
+	lookPause(4)
+
+	if route then
+		local corners = {}
+		for i = 2, #route - 1 do
+			table.insert(corners, string.format("(%.0f,%.0f)", route[i].Position.X - TEST_ORIGIN.X, route[i].Position.Z - TEST_ORIGIN.Z))
+		end
+		info("Curvas: cantos da rota", table.concat(corners, " "))
+	end
+	info("Curvas: trilha da reta", straight.trail)
+	info("Curvas: trilha da curva", curved.trail)
+
+	local ok = straight.reached
+		and curved.reached
+		and curved.length <= straight.length + 1
+		and curved.cornerCut >= straight.cornerCut + 0.5
+	return report(
+		"Curvas: com Curves a trajetória corta os cantos da rota e não fica mais longa",
+		ok,
+		string.format(
+			"afastamento máximo dos cantos: reta %.1f, curva %.1f studs; distância: reta %.1f, curva %.1f; mudança de direção por amostra (0.1 s): reta %.0f, curva %.0f graus; por bloco (0.4 s): reta %.0f, curva %.0f graus; tempo: reta %.1fs, curva %.1fs",
+			straight.cornerCut,
+			curved.cornerCut,
+			straight.length,
+			curved.length,
+			straight.maxTurn,
+			curved.maxTurn,
+			straight.smoothTurn,
+			curved.smoothTurn,
+			straight.seconds,
+			curved.seconds
+		)
+	)
+end
+
+local function testCurvesKeepJumpsAndRamp(): boolean
+	local area = newArea()
+	local start, goal = buildCourse(area) -- corredor, mureta (com passagem), rampa e plataforma
+	task.wait(NAVMESH_SETTLE)
+	local rig = makeRig(area, start)
+	local result = traceRun(rig, goal, { Stability = { Curves = true } }, Color3.fromRGB(70, 255, 90))
+	local dist = flatDist(rootOf(rig).Position, goal)
+	lookPause(3)
+	return report(
+		"Curvas: percurso completo (corredor, mureta, rampa) chega ao destino",
+		result.reached and not result.failed and dist < 3,
+		string.format("chegou %s em %.1fs, a %.1f do destino, saltos %d, maior mudança de direção %.0f graus", tostring(result.reached), result.seconds, dist, result.jumps, result.maxTurn)
+	)
+end
+
+local function testCurvesJumpExact(): boolean
+	-- mureta sem passagem: a única saída é saltar, e a decolagem tem de acontecer no ponto certo
+	local area = newArea()
+	local start, goal = buildMuretaCourse(area)
+	task.wait(NAVMESH_SETTLE)
+	local rig = makeRig(area, start)
+	local result = traceRun(rig, goal, { Stability = { Curves = true } }, Color3.fromRGB(70, 255, 90))
+	lookPause(3)
+	return report(
+		"Curvas: com salto obrigatório (mureta sem passagem) ainda salta e chega",
+		result.reached and result.jumps >= 1,
+		string.format("chegou %s, saltos %d, %.1fs", tostring(result.reached), result.jumps, result.seconds)
+	)
+end
+
+local function testCurvesTightCorridor(): boolean
+	local area = newArea()
+	addFloor(area, "Floor", 0, 0, 120, 60)
+	addBlock(area, "CorridorNorth", Vector3.new(0, 6, 16), Vector3.new(30, 12, 28)) -- corredor de 4 studs
+	addBlock(area, "CorridorSouth", Vector3.new(0, 6, -16), Vector3.new(30, 12, 28))
+	task.wait(NAVMESH_SETTLE)
+	local rig = makeRig(area, TEST_ORIGIN + Vector3.new(-45, 0, 18))
+	local goal = TEST_ORIGIN + Vector3.new(45, 0, -18)
+	showRoute(rig, goal)
+	local stopTrail = startTrail(rig, Color3.fromRGB(70, 255, 90))
+	local agent = newAgent(rig, curveOptions({ Stability = { Curves = true } }))
+	local st = watch(agent)
+	agent:MoveTo(goal)
+	local done = waitUntil(function()
+		return st.reached > 0 or st.failed > 0
+	end, 60)
+	local dist = flatDist(rootOf(rig).Position, goal)
+	stopTrail()
+	lookPause(3)
+	agent:Destroy()
+	return report(
+		"Curvas: corredor de 4 studs com entrada e saída fora do eixo, sem travar nem cortar parede",
+		done and st.reached == 1 and st.blocked == 0 and dist < 3,
+		describeStatus(st, string.format("a %.1f do destino", dist))
+	)
+end
+
+local function testCurvesRouteUnchanged(): boolean
+	local area = newArea()
+	local start, goal = buildBendCourse(area)
+	task.wait(NAVMESH_SETTLE)
+	local rig = makeRig(area, start)
+	showRoute(rig, goal)
+	local plain = SmartPath.GetRoute(rig, goal, baseOptions() :: any)
+	local curved = SmartPath.GetRoute(rig, goal, baseOptions({ Stability = { Curves = true } }) :: any)
+	lookPause(3)
+	local same = plain ~= nil and curved ~= nil and #plain == #curved
+	if same then
+		for i, wp in ipairs(plain :: { any }) do
+			if ((curved :: { any })[i].Position - wp.Position).Magnitude > 1e-3 then
+				same = false
+			end
+		end
+	end
+	return report(
+		"Curvas: GetRoute devolve os mesmos waypoints com e sem Curves (a curva é só como o agente segue)",
+		same,
+		string.format("sem: %s waypoints, com: %s waypoints", if plain then tostring(#plain) else "nil", if curved then tostring(#curved) else "nil")
+	)
+end
+
+local function testCurvesToggleAtRuntime(): boolean
+	local area = newArea()
+	local start, goal = buildBendCourse(area)
+	task.wait(NAVMESH_SETTLE)
+	local rig = makeRig(area, start)
+	showRoute(rig, goal)
+	local stopTrail = startTrail(rig, Color3.fromRGB(70, 255, 90))
+	local agent = newAgent(rig, curveOptions(nil))
+	local before = agent.Options.Stability.Curves
+	agent:SetOptions({ Stability = { Curves = true } })
+	local on = agent.Options.Stability.Curves
+	local st = watch(agent)
+	agent:MoveTo(goal)
+	local done = waitUntil(function()
+		return st.reached > 0 or st.failed > 0
+	end, 60)
+	agent:SetOptions({ Stability = { Curves = false } })
+	local off = agent.Options.Stability.Curves
+	stopTrail()
+	lookPause(3)
+	agent:Destroy()
+	return report(
+		"Curvas: SetOptions liga e desliga em tempo de execução e o agente chega",
+		before == false and on == true and off == false and done and st.reached == 1,
+		string.format("antes %s, depois de ligar %s, depois de desligar %s; %s", tostring(before), tostring(on), tostring(off), describeStatus(st))
+	)
+end
+
+-- Cada teste começa e termina com a pasta de debug vazia: o que um teste desenha não aparece no seguinte.
+local function scoped(name: string, fn: () -> boolean): boolean
+	return safe(name, function()
+		SmartPath.Debug.clear()
+		local ok, result = pcall(fn)
+		SmartPath.Debug.clear()
+		if not ok then
+			error(result, 0)
+		end
+		return result
+	end)
+end
+
+function Tests.Curves(debug: boolean?): boolean
+	curvesDebug = debug == true
+	print("[SmartPathTests] ==== Curvas: Stability.Curves" .. (if curvesDebug then " (com debug: rota, raio e rastros)" else "") .. " ====")
+	local results = {
+		scoped("padrão desligado", testCurvesDefaultOff),
+		scoped("trajetória mais suave", testCurvesSmoother),
+		scoped("percurso completo", testCurvesKeepJumpsAndRamp),
+		scoped("salto obrigatório", testCurvesJumpExact),
+		scoped("corredor apertado", testCurvesTightCorridor),
+		scoped("GetRoute igual", testCurvesRouteUnchanged),
+		scoped("liga e desliga", testCurvesToggleAtRuntime),
+	}
+	curvesDebug = false
+	local allOk = true
+	for _, ok in ipairs(results) do
+		allOk = allOk and ok
+	end
+	print("[SmartPathTests] ==== Resultado: " .. (allOk and "TUDO PASSOU" or "HÁ FALHAS ACIMA") .. " ====")
+	return allOk
+end
+
 return Tests

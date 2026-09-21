@@ -64,18 +64,18 @@ local function newHandle(entry: Entry): HandleImpl
 end
 
 function HandleMeta:cancel()
-	local self = self :: HandleImpl
-	if self._done or self._cancelled then
+	local this = self :: HandleImpl
+	if this._done or this._cancelled then
 		return
 	end
-	self._cancelled = true
-	self._completed:Fire() -- libera quem estiver em :await()
+	this._cancelled = true
+	this._completed:Fire() -- libera quem estiver em :await()
 
-	local entry = self._entry
+	local entry = this._entry
 	if entry.started then
 		return -- já disparado: não dá pra abortar o fn em voo, só descartar o resultado
 	end
-	local idx = table.find(entry.waiters, self :: any)
+	local idx = table.find(entry.waiters, this :: any)
 	if idx then
 		table.remove(entry.waiters, idx)
 	end
@@ -101,18 +101,18 @@ function HandleMeta:isCancelled(): boolean
 end
 
 function HandleMeta:await(): ...any
-	local self = self :: HandleImpl
-	if self._done then
-		return table.unpack(self._results :: { any }, 1, self._resultsN)
+	local this = self :: HandleImpl
+	if this._done then
+		return table.unpack(this._results :: { any }, 1, this._resultsN)
 	end
-	if self._cancelled then
+	if this._cancelled then
 		return nil, "cancelled"
 	end
-	self._completed:Wait()
-	if self._cancelled then
+	this._completed:Wait()
+	if this._cancelled then
 		return nil, "cancelled"
 	end
-	return table.unpack(self._results :: { any }, 1, self._resultsN)
+	return table.unpack(this._results :: { any }, 1, this._resultsN)
 end
 
 -- ===== Submissão =====

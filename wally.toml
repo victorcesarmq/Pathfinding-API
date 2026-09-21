@@ -1,0 +1,27 @@
+[package]
+# Troque "seu-usuario" pelo seu escopo no Wally (o nome de usuário que você registrou com `wally login`).
+name = "seu-usuario/smartpath"
+version = "1.0.0"
+registry = "https://github.com/UpliftGames/wally-index"
+realm = "shared"
+license = "MIT"
+authors = ["Victor"]
+description = "Pathfinding que conhece o agente de verdade: raio adaptativo, saltos por balística, filtro de geometria invisível, cache e erros com diagnóstico."
+exclude = [
+  "src/tests/**",
+  "src/demo/**",
+  "src/client/**",
+  "src/server/**",
+  "src/shared/**",
+  "dev.project.json",
+  "demo.project.json",
+  "*.rbxlx",
+  "*.rbxlx.lock",
+  "aftman.toml",
+  "sourcemap.json",
+  "COMPACT*.md",
+  "docs/SMARTPATH_PLANO_DE_EXECUCAO.md",
+  "docs/ESPEC_NAVEGACAO_ROBLOX.md",
+]
+
+[dependencies]

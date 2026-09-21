@@ -65,3 +65,9 @@ autorização.
   (60), mas o pico da SmartPath é de 147 a 183 ms contra 116 a 122 ms. Provavelmente o cálculo
   simultâneo das 20 rotas iniciais; o `Scheduler` limita o orçamento por frame, então vale medir
   antes de mexer.
+- **README, API e post em inglês** (surgiu na Fase 9, D-034): a documentação está só em português,
+  como o `explain`. Uma versão em inglês alcança a comunidade internacional do DevForum; as
+  mensagens do `explain` também precisariam de tradução (já estão numa tabela por código).
+- **GIFs do antes/depois** (Fase 9): não foram gravados; a lista de cenas está em `docs/PUBLISHING.md`.
+- **Validar o passo a passo do README com uma pessoa** (Fase 9): o critério "instala e move um NPC em
+  menos de 5 minutos" precisa de alguém que nunca viu o projeto.

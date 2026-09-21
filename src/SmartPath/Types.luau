@@ -31,6 +31,7 @@ export type StabilityOptions = {
 	Cache: boolean?,
 	Smoothing: boolean?,
 	Hysteresis: number?,
+	Curves: boolean?,
 }
 
 export type GeometryOptions = {
@@ -77,6 +78,7 @@ export type ResolvedOptions = {
 		Cache: boolean,
 		Smoothing: boolean,
 		Hysteresis: number,
+		Curves: boolean,
 	},
 	Geometry: {
 		AutoFilter: boolean,

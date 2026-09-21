@@ -687,7 +687,7 @@ local function solveFrom(
 		return fail(ctx, Errors.GoalUnreachable, { nearestValid = nearestValid, requestedGoal = goalRaw }, goalRaw, nil)
 	end
 
-	local rc = cache or sharedCache
+	local rc: RouteCache.RouteCache = cache or sharedCache
 	local useCache = options.Stability.Cache
 	local profile = string.format(
 		"r%.2f|h%.2f|j%d|%s",

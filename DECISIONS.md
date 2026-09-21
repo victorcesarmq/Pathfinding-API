@@ -523,3 +523,42 @@ Motivo: uma biblioteca é o que ela faz nos casos que o autor não pensou; cada 
 resultado previsível e um teste.
 Consequência: `Config.resolve` passa a devolver `Jump.Enabled = false` para um Humanoid que não salta,
 mesmo sem o usuário pedir; quem quiser forçar passa `Jump = { Enabled = true }`.
+
+## D-034 — Empacotamento da 1.0: idioma, licença, projetos Rojo e o que não foi feito
+Data: 2026-09-21
+Contexto: a Fase 9 pede README, API, CHANGELOG, `wally.toml`, `default.project.json`, modelo no
+Creator Store e post no DevForum. Três escolhas eram do dono do projeto e uma dependia de infra.
+Decisão: (1) Idioma: português (README, API, post), o mesmo do `explain`; uma tradução para inglês
+fica no backlog. (2) Licença MIT, titular "Victor" (a confirmar). (3) O Wally exige um
+`default.project.json` na raiz apontando para a biblioteca, então o antigo (biblioteca + testes +
+Baseplate) virou `dev.project.json` e `default.project.json` monta só `src/SmartPath`. (4) O
+`wally.toml` usa o escopo `seu-usuario`, para trocar antes de publicar. (5) Não foram criados GIFs,
+o modelo do Creator Store, a publicação no Wally, o repositório no GitHub nem a tag: exigem a conta
+do dono; `docs/PUBLISHING.md` traz o passo a passo e a lista de cenas a gravar.
+Motivo: a 1.0 só é confiável se o README não promete o que a biblioteca não faz; por isso a seção de
+limitações traz as descobertas medidas nas Fases 6 a 8 (a engine resolve sozinha corredores e
+muretas de 3 studs; a escada reduz o raio, não a altura; o atalho de salto vê 10 studs; cliente e
+`StreamingEnabled` não validados).
+Consequência: quem rodava `rojo serve` sem argumento passa a usar `rojo serve dev.project.json`. Os
+exemplos do README foram conferidos por análise de tipos contra a biblioteca real, mas o teste
+"um desenvolvedor novo instala e move um NPC em 5 minutos" só pode ser feito por uma pessoa.
+
+## D-035 — Trajetória em curva opcional (`Stability.Curves`), por olhar à frente
+Data: 2026-09-21
+Contexto: a rota é uma poligonal e o agente anda reto até cada waypoint, virando de uma vez no canto.
+O usuário pediu curvas, sem alterar o funcionamento existente.
+Decisão: campo novo e ADITIVO `Stability.Curves` (boolean, padrão `false`), autorizado pelo dono (a tabela
+de opções da Seção 3.5 era congelada). Com ele ligado, `Agent._aimPoint` mira num ponto adiante NA ROTA
+(`WalkSpeed x 0.3` studs, entre 3 e 8), em vez do waypoint atual; o ponto para no primeiro waypoint
+"duro" (o que antecede um salto ou link, o próprio Jump/Custom e o último), então decolagens e a chegada
+continuam exatas. A distância é validada a cada `PROBE_INTERVAL` por um `Spherecast` do corpo (0.6 x o
+raio) até o ponto, reduzida à metade até 3 vezes e, se não cabe, cai para o waypoint (reta). Um waypoint
+macio conta como alcançado quando o agente passa dele na direção do segmento seguinte, porque a curva o
+corta e o raio de chegada de 1.25 studs nunca seria atingido. Com `Curves = false` o passo é o mesmo de
+antes (`_aimPoint` devolve o waypoint).
+Motivo: é a menor mudança que dá trajetória suave sem tocar na rota, no cache, no `Waypoint` nem na
+validação; a curva desenhada (Bézier/Catmull-Rom sobre a rota) ficou de fora por precisar de um passo
+extra de validação por arco.
+Consequência: `GetRoute` e o `Debug` continuam mostrando a poligonal, não a trajetória. Os valores
+(0.3 s, 3 a 8 studs) são [VALIDAR] no rig do jogo. Custo: uma varredura a mais por agente a cada 0.1 s,
+só com a opção ligada.

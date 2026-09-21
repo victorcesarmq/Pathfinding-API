@@ -173,7 +173,7 @@ local function refresh(inst: Instance)
 	end
 	local shouldIgnore, reason = classify(inst)
 	if shouldIgnore and reason then
-		mark(inst, reason)
+		mark(inst, reason :: ClassifyReason)
 	else
 		unmark(inst)
 	end
@@ -321,7 +321,10 @@ end
 -- RaycastParams para os raycasts da própria SmartPath. `extra` = instâncias adicionais a
 -- excluir (tipicamente o personagem do próprio agente).
 function Geometry.buildRaycastParams(extra: { Instance }?): RaycastParams
-	local list = table.clone(ignoredList) :: { Instance }
+	local list: { Instance } = {}
+	for _, part in ipairs(ignoredList) do
+		table.insert(list, part)
+	end
 	for model in pairs(characters) do
 		if model.Parent then
 			table.insert(list, model)
