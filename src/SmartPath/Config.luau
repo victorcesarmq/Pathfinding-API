@@ -73,6 +73,12 @@ function Config.merge(overrides: Types.Options?): { [string]: any }
 	return deepMerge(Config.Defaults :: any, overrides :: any)
 end
 
+-- Mescla duas camadas de overrides do usuário, sem os defaults no meio: o Agent guarda o
+-- que o usuário pediu e re-resolve a cada SetOptions, mantendo `nil` = "derive do personagem".
+function Config.overlay(base: Types.Options?, over: Types.Options?): Types.Options
+	return deepMerge((base or {}) :: any, over :: any) :: any
+end
+
 -- Resolve as opções finais para um personagem específico: aplica os overrides do
 -- usuário sobre os defaults e preenche todo campo nil de Agent/Jump com um valor
 -- derivado do próprio personagem.

@@ -6,7 +6,6 @@
 
 export type SmartAction = "Walk" | "Jump" | "Drop" | "Link"
 
-
 export type Waypoint = {
 	Position: Vector3,
 	Action: Enum.PathWaypointAction,

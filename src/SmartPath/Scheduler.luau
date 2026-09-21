@@ -51,14 +51,16 @@ local seqCounter = 0
 local budget = 4
 
 local function newHandle(entry: Entry): HandleImpl
-	return (setmetatable({
-		_entry = entry,
-		_cancelled = false,
-		_done = false,
-		_results = nil,
-		_resultsN = 0,
-		_completed = Signal.new(),
-	}, HandleMeta) :: any) :: HandleImpl
+	return (
+		setmetatable({
+			_entry = entry,
+			_cancelled = false,
+			_done = false,
+			_results = nil,
+			_resultsN = 0,
+			_completed = Signal.new(),
+		}, HandleMeta) :: any
+	) :: HandleImpl
 end
 
 function HandleMeta:cancel()

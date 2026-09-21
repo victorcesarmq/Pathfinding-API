@@ -111,6 +111,16 @@ function Util.getAgentHeight(character: Model): number
 	return (size :: Vector3).Y
 end
 
+-- Raio físico do corpo, usado para validar volume livre (Spherecast). Agent.Radius vem do
+-- bounding box e inclui braços/pernas que não colidem com o Humanoid; a ESPEC de
+-- referência usa 1.2 de sonda para Agent.Radius 2 (SmoothingProbeRadius), ou seja, 0.6x.
+-- Ver D-009 em DECISIONS.md.
+Util.BODY_RADIUS_RATIO = 0.6
+
+function Util.getBodyRadius(agentRadius: number): number
+	return agentRadius * Util.BODY_RADIUS_RATIO
+end
+
 -- ===== Física de salto (Seção 1.3 da ESPEC) =====
 
 function Util.getMaxJumpHeight(humanoid: Humanoid): number

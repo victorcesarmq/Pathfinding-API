@@ -41,6 +41,12 @@ local requireNameMatch = true
 local changedEvent = Instance.new("BindableEvent")
 Geometry.Changed = changedEvent.Event
 
+-- Dispara quando uma parte colidível e consultável entra no workspace (depois do defer, com as
+-- propriedades já setadas). O Path.Blocked da engine não é confiável para partes inseridas em
+-- runtime (D-021), então os agentes usam isto para revalidar a rota que estão seguindo.
+local partAddedEvent = Instance.new("BindableEvent")
+Geometry.PartAdded = partAddedEvent.Event
+
 local descendantConn: RBXScriptConnection? = nil
 local ancestryConns: { [BasePart]: RBXScriptConnection } = {}
 local tagConns: { RBXScriptConnection } = {}
@@ -186,7 +192,12 @@ function Geometry.start()
 	descendantConn = workspace.DescendantAdded:Connect(function(d)
 		-- defer: propriedades (Transparency, CanCollide, Name) costumam ser setadas logo
 		-- após o parent
-		task.defer(refresh, d)
+		task.defer(function()
+			refresh(d)
+			if d:IsA("BasePart") and d.CanCollide and d.CanQuery and not ignored[d] then
+				partAddedEvent:Fire(d)
+			end
+		end)
 	end)
 	for _, tag in ipairs({ IGNORE_TAG, SOLID_TAG }) do
 		table.insert(tagConns, CollectionService:GetInstanceAddedSignal(tag):Connect(refreshTree))
