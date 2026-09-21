@@ -621,13 +621,13 @@ local function reportLines(cell: Cell): { string }
 	return lines
 end
 
--- Roda os 8 cenários em sequência e imprime o resultado, lado a lado. Bloqueia (~8 minutos).
+-- Roda todos os cenários em sequência e imprime o resultado, lado a lado. Bloqueia (~8 minutos).
 function Runner.runReport(only: number?): { [number]: { L: boolean, R: boolean } }
 	if #cells == 0 then
 		error("SmartPathDemo: o Runner ainda não montou os cenários; espere o print \"pronto\" no Output", 2)
 	end
 	local summary: { [number]: { L: boolean, R: boolean } } = {}
-	print("[SmartPathDemo] ==== relatório: 8 cenários, PathfindingService puro x SmartPath ====")
+	print(string.format("[SmartPathDemo] ==== relatório: %d cenários, PathfindingService puro x SmartPath ====", #cells))
 	for _, cell in ipairs(cells) do
 		if only and cell.id ~= only then
 			continue

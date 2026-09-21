@@ -1,6 +1,6 @@
 --!strict
 -- Scenarios.luau
--- Os 8 cenários do place de demonstração. Cada cenário tem UMA função de geometria (`build`),
+-- Os 11 cenários do place de demonstração (1 a 8 do plano; 9 a 11: caverna com zona invisível). Cada cenário tem UMA função de geometria (`build`),
 -- chamada duas vezes com origens diferentes: o lado esquerdo (PathfindingService puro) e o
 -- direito (SmartPath) recebem geometria idêntica ao stud.
 --
@@ -255,6 +255,38 @@ local function buildCrowd(ctx: BuildContext)
 	block(ctx, "HalfWall", Vector3.new(5, 5, -19), Vector3.new(2, 10, 22)) -- z de -30 a -8
 end
 
+-- ===== 9 a 11. Caverna com zona invisível =====
+-- Uma caixa de 40 x 28 x 8 studs (interior) com uma face aberta para o oeste (a entrada) e uma zona
+-- invisível colidível ("CaveZone", como a que dispara a mensagem "você entrou na caverna") ocupando o
+-- interior inteiro. Para a malha do PathfindingService a zona é um bloco maciço: nada entra, nada sai
+-- e nada anda lá dentro. O corpo a atravessa (grupo de colisão que não colide com personagens).
+
+local function buildCaveShell(ctx: BuildContext, goalLocal: Vector3)
+	arena(ctx)
+	-- casca da caverna: x de 8 a 52, z de -16 a 16, interior x de 10 a 50, z de -14 a 14, altura 8
+	block(ctx, "CaveRoof", Vector3.new(30, 9, 0), Vector3.new(44, 2, 32))
+	block(ctx, "CaveBack", Vector3.new(51, 4, 0), Vector3.new(2, 8, 32))
+	block(ctx, "CaveWallNorth", Vector3.new(30, 4, 15), Vector3.new(44, 8, 2))
+	block(ctx, "CaveWallSouth", Vector3.new(30, 4, -15), Vector3.new(44, 8, 2))
+	local zone = block(ctx, "CaveZone", Vector3.new(30, 4, 0), Vector3.new(40, 8, 28))
+	zone.Transparency = 1
+	zone.CanCollide = true
+	zone.CollisionGroup = Scenarios.TRIGGER_GROUP
+	marker(ctx, "Goal", goalLocal, Color3.fromRGB(80, 255, 120))
+end
+
+local function buildCaveEnter(ctx: BuildContext)
+	buildCaveShell(ctx, Vector3.new(38, 0, 6))
+end
+
+local function buildCaveExit(ctx: BuildContext)
+	buildCaveShell(ctx, Vector3.new(-40, 0, 6))
+end
+
+local function buildCaveInside(ctx: BuildContext)
+	buildCaveShell(ctx, Vector3.new(44, 0, 8))
+end
+
 -- ===== lista =====
 
 Scenarios.list = {
@@ -349,6 +381,36 @@ Scenarios.list = {
 		start = Vector3.new(-50, 0, 0),
 		goal = Vector3.new(50, 0, 0),
 		timeLimit = 90,
+	},
+	{
+		id = 9,
+		name = "Caverna: entrar (de fora para dentro)",
+		description = "Caixa com uma face aberta e uma zona invisível colidível cobrindo o interior inteiro. O NPC começa fora e o destino fica dentro.",
+		kind = "normal",
+		build = buildCaveEnter,
+		start = Vector3.new(-30, 0, 0),
+		goal = Vector3.new(38, 0, 6),
+		timeLimit = 40,
+	},
+	{
+		id = 10,
+		name = "Caverna: sair (de dentro para fora)",
+		description = "A mesma caverna. O NPC começa DENTRO da zona invisível e o destino fica fora.",
+		kind = "normal",
+		build = buildCaveExit,
+		start = Vector3.new(38, 0, -6),
+		goal = Vector3.new(-40, 0, 6),
+		timeLimit = 40,
+	},
+	{
+		id = 11,
+		name = "Caverna: mover-se dentro (de um ponto a outro)",
+		description = "A mesma caverna. Início e destino dentro da zona: do fundo esquerdo ao fundo direito.",
+		kind = "normal",
+		build = buildCaveInside,
+		start = Vector3.new(16, 0, -8),
+		goal = Vector3.new(44, 0, 8),
+		timeLimit = 40,
 	},
 } :: { Scenario }
 

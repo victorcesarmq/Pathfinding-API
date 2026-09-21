@@ -2375,4 +2375,795 @@ function Tests.Phase6(): boolean
 	return allOk
 end
 
+-- ===================== Fase 8: endurecimento =====================
+-- Uso: require(game.ServerStorage.SmartPathTests).Phase8()          -- casos-limite + 500 agentes (~5 min)
+--      require(game.ServerStorage.SmartPathTests).Phase8Soak(10)    -- 20 NPCs por N minutos (padrão 10)
+-- Cada caso da checklist da Fase 8 é um teste reproduzível; o resultado inclui o que ficou documentado.
+
+local PlayersService = game:GetService("Players")
+local StatsService = game:GetService("Stats")
+
+-- Conta erros que chegaram ao Output (o critério "nenhum caso gera erro não tratado").
+local function captureErrors(): ({ string }, () -> ())
+	local errors: { string } = {}
+	local conn = LogService.MessageOut:Connect(function(message: string, kind: Enum.MessageType)
+		if kind == Enum.MessageType.MessageError then
+			table.insert(errors, message)
+		end
+	end)
+	return errors, function()
+		conn:Disconnect()
+	end
+end
+
+-- Rig de verdade (R15 ou R6), criado a partir de uma HumanoidDescription vazia. Pode falhar sem rede:
+-- devolve nil e o teste se declara pulado.
+local function makeRealRig(area: Folder, groundPos: Vector3, rigType: Enum.HumanoidRigType): Model?
+	local finished = false
+	local model: Model? = nil
+	task.spawn(function()
+		local ok, result = pcall(function()
+			return PlayersService:CreateHumanoidModelFromDescription(Instance.new("HumanoidDescription"), rigType)
+		end)
+		if ok then
+			model = result :: Model
+		end
+		finished = true
+	end)
+	waitUntil(function()
+		return finished
+	end, 8)
+	if not model then
+		return nil
+	end
+	model.Name = "Real" .. rigType.Name
+	model:PivotTo(CFrame.new(groundPos + Vector3.new(0, 4, 0)))
+	model.Parent = area
+	local humanoid = model:FindFirstChildOfClass("Humanoid")
+	local root = humanoid and humanoid.RootPart
+	if root then
+		pcall(function()
+			root:SetNetworkOwner(nil)
+		end)
+	end
+	local t0 = os.clock()
+	while humanoid and humanoid.FloorMaterial == Enum.Material.Air and os.clock() - t0 < 4 do
+		task.wait()
+	end
+	return model
+end
+
+local function skipped(name: string, why: string): boolean
+	info(name, "PULADO — " .. why)
+	return true
+end
+
+-- Chão liso de 120 x 40 (x de -60 a 60) para os casos que só precisam andar.
+local function flatArena(area: Folder)
+	addFloor(area, "Floor", 0, 0, 120, 40)
+end
+
+-- ----- 1. Personagem morre durante a rota e no ar -----
+
+local function testDeathMidRoute(): boolean
+	local area = newArea()
+	flatArena(area)
+	task.wait(NAVMESH_SETTLE)
+	local rig = makeRig(area, TEST_ORIGIN + Vector3.new(-40, 0, 0))
+	local agent = newAgent(rig)
+	local st = watch(agent)
+	agent:MoveTo(TEST_ORIGIN + Vector3.new(40, 0, 0))
+	task.wait(0.7)
+	humanoidOf(rig).Health = 0
+	local ok, reason, details = agent:Await()
+	local done = waitUntil(function()
+		return st.failed >= 1
+	end, 2)
+	agent:Destroy()
+	return report(
+		"Fase 8: morrer no meio da rota -> character_lost, sem erro",
+		ok == false and reason == "character_lost" and done,
+		string.format("Await: %s/%s, sinal Failed: %d (%s)", tostring(ok), tostring(reason), st.failed, describe(details))
+	)
+end
+
+local function testDeathInAir(): boolean
+	local area = newArea()
+	local start, goal = buildMuretaCourse(area)
+	task.wait(NAVMESH_SETTLE)
+	local rig = makeRig(area, start)
+	local humanoid = humanoidOf(rig)
+	local original = humanoid.JumpHeight
+	local agent = newAgent(rig)
+	agent:MoveTo(goal)
+	local airborne = waitUntil(function()
+		return agent:GetState() == "Airborne"
+	end, 25)
+	humanoid.Health = 0
+	local ok, reason = agent:Await()
+	task.wait(0.4)
+	local restored = humanoid.JumpHeight == original
+	agent:Destroy()
+	return report(
+		"Fase 8: morrer no ar -> character_lost e o JumpHeight volta ao original",
+		airborne and ok == false and reason == "character_lost" and restored,
+		string.format("chegou a Airborne: %s, Await: %s/%s, JumpHeight restaurado: %s", tostring(airborne), tostring(ok), tostring(reason), tostring(restored))
+	)
+end
+
+-- ----- 2. Personagem removido (Destroy) com agente ativo -----
+
+local function testCharacterDestroyed(): boolean
+	local area = newArea()
+	flatArena(area)
+	task.wait(NAVMESH_SETTLE)
+	local rig = makeRig(area, TEST_ORIGIN + Vector3.new(-40, 0, 0))
+	local agent = newAgent(rig)
+	local st = watch(agent)
+	agent:MoveTo(TEST_ORIGIN + Vector3.new(40, 0, 0))
+	task.wait(0.7)
+	rig:Destroy()
+	local ok, reason = agent:Await()
+	local selfDestroyed = waitUntil(function()
+		return agent._destroyed
+	end, 3)
+	local connections = agent:_liveConnectionCount()
+	return report(
+		"Fase 8: Destroy do personagem -> character_lost e o agente se destrói sozinho (0 conexões)",
+		ok == false and reason == "character_lost" and st.failed == 1 and selfDestroyed and connections == 0,
+		string.format("Await: %s/%s, Failed: %d, agente destruído: %s, conexões vivas: %d", tostring(ok), tostring(reason), st.failed, tostring(selfDestroyed), connections)
+	)
+end
+
+-- ----- 3. WalkSpeed = 0 (e Seated) -----
+
+local function testWalkSpeedZero(): boolean
+	local area = newArea()
+	flatArena(area)
+	task.wait(NAVMESH_SETTLE)
+	local start = TEST_ORIGIN + Vector3.new(-40, 0, 0)
+	local goal = TEST_ORIGIN + Vector3.new(40, 0, 0)
+	local rig = makeRig(area, start)
+	local humanoid = humanoidOf(rig)
+	humanoid.WalkSpeed = 0
+	local agent = newAgent(rig)
+	local st = watch(agent)
+	agent:MoveTo(goal)
+	task.wait(8) -- mais que os ~5 s do anti-stuck: sem o guarda, já teria falhado com stuck
+	local waitedOk = st.failed == 0 and st.reached == 0 and agent:GetState() == "Following"
+	local moved = flatDist(rootOf(rig).Position, start)
+	humanoid.WalkSpeed = 16
+	local resumed = waitUntil(function()
+		return st.reached > 0 or st.failed > 0
+	end, 30)
+	agent:Destroy()
+	return report(
+		"Fase 8: WalkSpeed 0 -> o agente espera (não vira stuck) e retoma quando a velocidade volta",
+		waitedOk and moved < 1 and resumed and st.reached == 1,
+		string.format("esperou sem falhar: %s (moveu %.1f), depois chegou: %s (%s)", tostring(waitedOk), moved, tostring(st.reached == 1), describeStatus(st))
+	)
+end
+
+local function testWalkSpeedZeroTimeout(): boolean
+	local area = newArea()
+	flatArena(area)
+	task.wait(NAVMESH_SETTLE)
+	local rig = makeRig(area, TEST_ORIGIN + Vector3.new(-40, 0, 0))
+	humanoidOf(rig).WalkSpeed = 0
+	local tuning = AgentModule._tuning
+	local saved = table.clone(tuning)
+	tuning.TimeoutBase, tuning.TimeoutFactor = 3, 0.1
+	local answered, ok, reason = moveOutcome(rig, TEST_ORIGIN + Vector3.new(40, 0, 0), nil, 20)
+	tuning.TimeoutBase, tuning.TimeoutFactor = saved.TimeoutBase, saved.TimeoutFactor
+	return report(
+		"Fase 8: WalkSpeed 0 para sempre -> falha com timeout, não fica esperando eternamente",
+		answered and ok == false and reason == "timeout",
+		string.format("respondeu %s, motivo %s", tostring(answered), tostring(reason))
+	)
+end
+
+local function testSeated(): boolean
+	local area = newArea()
+	flatArena(area)
+	local seat = Instance.new("Seat")
+	seat.Anchored = true
+	seat.Size = Vector3.new(4, 1, 4)
+	seat.Position = TEST_ORIGIN + Vector3.new(-40, 0.5, 0)
+	seat.Parent = area
+	task.wait(NAVMESH_SETTLE)
+	local rig = makeRig(area, TEST_ORIGIN + Vector3.new(-30, 0, 0))
+	local humanoid = humanoidOf(rig)
+	seat:Sit(humanoid)
+	local sat = waitUntil(function()
+		return humanoid.Sit
+	end, 3)
+	local goal = TEST_ORIGIN + Vector3.new(30, 0, 0)
+	local agent = newAgent(rig)
+	local st = watch(agent)
+	agent:MoveTo(goal)
+	task.wait(8)
+	local waitedOk = st.failed == 0 and agent:GetState() == "Following"
+	humanoid.Jump = true -- levanta do assento
+	local stood = waitUntil(function()
+		return not humanoid.Sit
+	end, 4)
+	local resumed = waitUntil(function()
+		return st.reached > 0 or st.failed > 0
+	end, 40)
+	agent:Destroy()
+	return report(
+		"Fase 8: personagem sentado -> o agente espera (não vira stuck) e segue depois de levantar",
+		sat and waitedOk and stood and resumed and st.reached == 1,
+		string.format("sentou %s, esperou sem falhar %s, levantou %s, %s", tostring(sat), tostring(waitedOk), tostring(stood), describeStatus(st))
+	)
+end
+
+-- ----- 4. JumpHeight = 0, UseJumpPower = true -----
+
+local function testJumpHeightZero(): boolean
+	-- percurso com passagem lateral pela mureta: chega sem saltar
+	local area = newArea()
+	local start, goal = buildCourse(area)
+	task.wait(NAVMESH_SETTLE)
+	local rig = makeRig(area, start)
+	local humanoid = humanoidOf(rig)
+	humanoid.UseJumpPower = false
+	humanoid.JumpHeight = 0
+	local agent = newAgent(rig)
+	local st = watch(agent)
+	agent:MoveTo(goal)
+	local done = waitUntil(function()
+		return st.reached > 0 or st.failed > 0
+	end, 70)
+	local route, why = SmartPath.GetRoute(rig, goal, baseOptions() :: any)
+	local hasJump = false
+	for _, wp in ipairs(route or {}) do
+		if wp.SmartAction == "Jump" then
+			hasJump = true
+		end
+	end
+	agent:Destroy()
+	local first = report(
+		"Fase 8: JumpHeight 0 -> a rota não tem saltos e o agente chega pelo desvio",
+		done and st.reached == 1 and st.jumps == 0 and route ~= nil and not hasJump,
+		string.format("%s; saltos %d; GetRoute com salto: %s (%s)", describeStatus(st), st.jumps, tostring(hasJump), tostring(why))
+	)
+
+	-- mureta sem passagem: sem salto, falha com código conhecido
+	local area2 = newArea()
+	local start2, goal2 = buildMuretaCourse(area2)
+	task.wait(NAVMESH_SETTLE)
+	local rig2 = makeRig(area2, start2)
+	local h2 = humanoidOf(rig2)
+	h2.UseJumpPower = false
+	h2.JumpHeight = 0
+	local answered, ok, reason = moveOutcome(rig2, goal2, nil, 40)
+	local second = report(
+		"Fase 8: JumpHeight 0 diante de uma mureta sem passagem -> falha com código conhecido",
+		answered and ok == false and (reason == "no_path" or reason == "obstacle_too_tall"),
+		string.format("respondeu %s, motivo %s", tostring(answered), tostring(reason))
+	)
+	return first and second
+end
+
+local function testUseJumpPower(): boolean
+	local area = newArea()
+	local start, goal = buildMuretaCourse(area)
+	task.wait(NAVMESH_SETTLE)
+	local rig = makeRig(area, start)
+	local humanoid = humanoidOf(rig)
+	humanoid.UseJumpPower = true
+	humanoid.JumpPower = 50
+	local agent = newAgent(rig)
+	local st = watch(agent)
+	agent:MoveTo(goal)
+	local done = waitUntil(function()
+		return st.reached > 0 or st.failed > 0
+	end, 40)
+	local powerAfter = humanoid.JumpPower
+	agent:Destroy()
+	return report(
+		"Fase 8: UseJumpPower = true -> salta a mureta e o JumpPower volta ao original",
+		done and st.reached == 1 and st.jumps >= 1 and powerAfter == 50,
+		string.format("%s; JumpPower depois: %s", describeStatus(st), tostring(powerAfter))
+	)
+end
+
+-- ----- 5. R6 e R15 reais, sem nenhuma opção -----
+
+local function testRigType(rigType: Enum.HumanoidRigType): boolean
+	local name = "Fase 8: rig " .. rigType.Name .. " real, zero configuração, salta a mureta e chega"
+	local area = newArea()
+	local start, goal = buildMuretaCourse(area)
+	task.wait(NAVMESH_SETTLE)
+	local rig = makeRealRig(area, start, rigType)
+	if not rig then
+		return skipped(name, "não foi possível criar o rig (CreateHumanoidModelFromDescription falhou)")
+	end
+	local derived = Config.resolve(rig)
+	local finished, res = runWithTimeout(50, function()
+		return SmartPath.MoveTo(rig, goal) -- nenhuma opção: raio, altura e salto vêm do próprio rig
+	end)
+	return report(
+		name,
+		finished and res[1] == true,
+		string.format(
+			"raio derivado %.2f, altura %.2f, salto máximo %.1f; resultado %s/%s",
+			derived.Agent.Radius,
+			derived.Agent.Height,
+			(derived.Jump.MaxHeight :: number),
+			tostring(finished and res[1]),
+			tostring(finished and res[2])
+		)
+	)
+end
+
+-- ----- 6. Destino igual à posição, destino a 5000 studs, NaN -----
+
+local function testDestinationSameAsPosition(): boolean
+	local area = newArea()
+	flatArena(area)
+	task.wait(NAVMESH_SETTLE)
+	local rig = makeRig(area, TEST_ORIGIN + Vector3.new(0, 0, 0))
+	local root = rootOf(rig)
+	local t0 = os.clock()
+	local a1, ok1 = moveOutcome(rig, root.Position, {}, 10)
+	local e1 = os.clock() - t0
+	local a2, ok2 = moveOutcome(rig, root.Position + Vector3.new(0.6, 0, 0.3), {}, 10)
+	local finished3, res3 = runWithTimeout(10, function()
+		return SmartPath.MoveTo(rig, root) -- o próprio personagem como destino
+	end)
+	local route, why = SmartPath.GetRoute(rig, root.Position, baseOptions() :: any)
+	return report(
+		"Fase 8: destino igual à posição (Vector3, quase igual e o próprio personagem) -> chega na hora, sem erro",
+		a1 and ok1 == true and e1 < 2 and a2 and ok2 == true and finished3 and res3[1] == true,
+		string.format(
+			"igual: %s em %.2fs; a 0.7: %s; o próprio root: %s; GetRoute: %s",
+			tostring(ok1),
+			e1,
+			tostring(ok2),
+			tostring(finished3 and res3[1]),
+			route and (#route .. " waypoints") or tostring(why)
+		)
+	)
+end
+
+local function testNonFiniteDestination(): boolean
+	local area = newArea()
+	flatArena(area)
+	task.wait(NAVMESH_SETTLE)
+	local rig = makeRig(area, TEST_ORIGIN + Vector3.new(-40, 0, 0))
+	local answered, ok, reason = moveOutcome(rig, Vector3.new(0 / 0, 0, 0), {}, 10)
+	local a2, ok2, reason2 = moveOutcome(rig, Vector3.new(math.huge, 0, 0), {}, 10)
+	return report(
+		"Fase 8: destino NaN ou infinito -> goal_unreachable, sem propagar NaN",
+		answered and ok == false and reason == "goal_unreachable" and a2 and ok2 == false and reason2 == "goal_unreachable",
+		string.format("NaN: %s, infinito: %s", tostring(reason), tostring(reason2))
+	)
+end
+
+local function testFarDestination(): boolean
+	local area = newArea()
+	flatArena(area)
+	-- uma ilha a 5000 studs, sem ligação com o resto
+	addFloor(area, "FarIsland", 5000, 0, 60, 60)
+	task.wait(NAVMESH_SETTLE)
+	local rig = makeRig(area, TEST_ORIGIN + Vector3.new(-40, 0, 0))
+	local t0 = os.clock()
+	local a1, ok1, reason1 = moveOutcome(rig, TEST_ORIGIN + Vector3.new(5000, 0, 0), {}, 40) -- ilha sem ligação
+	local e1 = os.clock() - t0
+	t0 = os.clock()
+	local a2, ok2, reason2 = moveOutcome(rig, TEST_ORIGIN + Vector3.new(5000, 0, 800), {}, 40) -- vazio
+	local e2 = os.clock() - t0
+	return report(
+		"Fase 8: destino a 5000 studs -> no_path (ilha sem ligação) ou goal_unreachable (vazio), rápido e sem erro",
+		a1 and ok1 == false and reason1 == "no_path" and a2 and ok2 == false and reason2 == "goal_unreachable",
+		string.format("ilha: %s em %.1fs; vazio: %s em %.1fs", tostring(reason1), e1, tostring(reason2), e2)
+	)
+end
+
+-- ----- 7. Sem nenhum chão sob o agente -----
+
+local function testNoGround(): boolean
+	local area = newArea()
+	flatArena(area)
+	task.wait(NAVMESH_SETTLE)
+	local rig = makeRig(area, TEST_ORIGIN + Vector3.new(0, 0, 0))
+	local root = rootOf(rig)
+	root.Anchored = true -- parado no vazio, sem cair até a morte durante o teste
+	rig:PivotTo(CFrame.new(TEST_ORIGIN + Vector3.new(0, 300, 0)))
+	task.wait(0.3)
+	local t0 = os.clock()
+	local answered, ok, reason, details = moveOutcome(rig, TEST_ORIGIN + Vector3.new(40, 0, 0), {}, 20)
+	local elapsed = os.clock() - t0
+	local clean, text = explainClean(reason, details)
+	info("explain (sem chão)", text)
+	return report(
+		"Fase 8: sem chão sob o agente -> no_path com noGround, em poucos segundos",
+		answered and ok == false and reason == "no_path" and details ~= nil and details.noGround == true and elapsed < 6 and clean,
+		string.format("motivo %s em %.1fs, %s", tostring(reason), elapsed, describe(details))
+	)
+end
+
+-- ----- 8. workspace.Gravity alterado -----
+
+local function testGravity(): boolean
+	local original = workspace.Gravity
+	local results = {}
+	for _, g in ipairs({ 60, 400 }) do
+		workspace.Gravity = g
+		local area = newArea()
+		local start, goal = buildMuretaCourse(area)
+		task.wait(NAVMESH_SETTLE)
+		local rig = makeRig(area, start)
+		local agent = newAgent(rig)
+		local st = watch(agent)
+		agent:MoveTo(goal)
+		local done = waitUntil(function()
+			return st.reached > 0 or st.failed > 0
+		end, 45)
+		table.insert(results, string.format("g=%d: %s (saltos %d)", g, if done and st.reached == 1 then "chegou" else describeStatus(st), st.jumps))
+		agent:Destroy()
+		cleanupArea()
+		if not (done and st.reached == 1) then
+			workspace.Gravity = original
+			return report("Fase 8: gravidade alterada (60 e 400) -> salta e chega", false, table.concat(results, "; "))
+		end
+	end
+	workspace.Gravity = original
+	return report("Fase 8: gravidade alterada (60 e 400) -> salta e chega", true, table.concat(results, "; "))
+end
+
+-- ----- 9. Dois agentes no mesmo personagem -----
+
+local function testTwoAgents(): boolean
+	local area = newArea()
+	flatArena(area)
+	task.wait(NAVMESH_SETTLE)
+	local rig = makeRig(area, TEST_ORIGIN + Vector3.new(-40, 0, 0))
+	local first = SmartPath.new(rig, baseOptions() :: any)
+	local okSecond, message = pcall(function()
+		return SmartPath.new(rig)
+	end)
+	local shared = SmartPath.MoveToAsync(rig, TEST_ORIGIN + Vector3.new(-20, 0, 0)) -- nível 0 reaproveita
+	local reused = shared == first
+	first:Stop()
+	first:Destroy()
+	local okThird, third = pcall(function()
+		return SmartPath.new(rig)
+	end)
+	if okThird then
+		(third :: any):Destroy()
+	end
+	local clear = not okSecond and string.find(tostring(message), "já existe um agente", 1, true) ~= nil
+	return report(
+		"Fase 8: dois agentes no mesmo personagem -> SmartPath.new dá erro claro; MoveTo reaproveita; depois de Destroy pode criar de novo",
+		clear and reused and okThird,
+		string.format("segundo new: %s (%s), MoveTo reaproveitou: %s, new depois do Destroy: %s", if okSecond then "criou (ruim)" else "erro", tostring(message), tostring(reused), tostring(okThird))
+	)
+end
+
+-- ----- 10. MoveTo dentro de Reached e de Failed -----
+
+local function testReentrancy(): boolean
+	local area = newArea()
+	flatArena(area)
+	task.wait(NAVMESH_SETTLE)
+	local rig = makeRig(area, TEST_ORIGIN + Vector3.new(-40, 0, 0))
+	local agent = newAgent(rig)
+	local legs = { TEST_ORIGIN + Vector3.new(-10, 0, 10), TEST_ORIGIN + Vector3.new(20, 0, -10), TEST_ORIGIN + Vector3.new(45, 0, 5) }
+	local reached = 0
+	agent.Reached:Connect(function()
+		reached += 1
+		if legs[reached + 1] then
+			agent:MoveTo(legs[reached + 1]) -- MoveTo dentro do handler de Reached
+		end
+	end)
+	agent:MoveTo(legs[1])
+	local chained = waitUntil(function()
+		return reached >= 3
+	end, 60)
+	local finalDist = flatDist(rootOf(rig).Position, legs[3])
+
+	-- e dentro de Failed: destino impossível, depois um possível
+	local failedCount = 0
+	local recovered = 0
+	agent.Failed:Connect(function()
+		failedCount += 1
+		if failedCount == 1 then
+			agent:MoveTo(TEST_ORIGIN + Vector3.new(0, 0, 0))
+		end
+	end)
+	agent.Reached:Connect(function()
+		if failedCount == 1 then
+			recovered += 1
+		end
+	end)
+	agent:MoveTo(TEST_ORIGIN + Vector3.new(0, 3, 0) + Vector3.new(4000, 0, 0)) -- no vazio
+	local recoveredOk = waitUntil(function()
+		return recovered >= 1
+	end, 40)
+	agent:Destroy()
+	return report(
+		"Fase 8: MoveTo dentro de Reached (3 trechos encadeados) e dentro de Failed",
+		chained and finalDist < 4 and failedCount == 1 and recoveredOk,
+		string.format("Reached: %d, a %.1f do último destino; Failed: %d, recuperou: %s", reached, finalDist, failedCount, tostring(recoveredOk))
+	)
+end
+
+-- ----- 11. StreamingEnabled (região sem geometria) -----
+
+local function testStreamingRegion(): boolean
+	local area = newArea()
+	flatArena(area)
+	task.wait(NAVMESH_SETTLE)
+	local rig = makeRig(area, TEST_ORIGIN + Vector3.new(-40, 0, 0))
+	-- uma região que ainda não chegou ao cliente é, para o solver, um destino sem chão
+	local answered, ok, reason, details = moveOutcome(rig, TEST_ORIGIN + Vector3.new(0, 0, 400), {}, 20)
+	local streaming = workspace.StreamingEnabled
+	return report(
+		"Fase 8: destino em região sem geometria carregada -> goal_unreachable, sem erro (no cliente com StreamingEnabled pede o stream antes)",
+		answered and ok == false and reason == "goal_unreachable",
+		string.format("motivo %s; StreamingEnabled neste place: %s (o pedido RequestStreamAroundAsync só roda no cliente: [VALIDAR]); %s", tostring(reason), tostring(streaming), describe(details))
+	)
+end
+
+-- ----- 12. Vazamento: 500 agentes -----
+
+local function instanceCount(): number
+	local ok, n = pcall(function()
+		return StatsService.InstanceCount
+	end)
+	if ok then
+		return n :: number
+	end
+	return #game:GetDescendants()
+end
+
+local function lowestMemoryKb(readings: number): number
+	local lowest = math.huge
+	for _ = 1, readings do
+		lowest = math.min(lowest, gcinfo())
+		task.wait(0.5)
+	end
+	return lowest
+end
+
+local function testLeak500(): boolean
+	local area = newArea()
+	flatArena(area)
+	task.wait(NAVMESH_SETTLE)
+	local rig = makeRig(area, TEST_ORIGIN + Vector3.new(-40, 0, 0))
+	local goal = TEST_ORIGIN + Vector3.new(40, 0, 0)
+	-- aquecimento: cria caches e módulos preguiçosos antes de medir
+	for _ = 1, 10 do
+		SmartPath.new(rig, baseOptions() :: any):Destroy()
+	end
+	task.wait(1)
+	local memBefore = lowestMemoryKb(4)
+	local instancesBefore = instanceCount()
+	local mbBefore = StatsService:GetTotalMemoryUsageMb()
+
+	for i = 1, 500 do
+		local agent = SmartPath.new(rig, baseOptions() :: any)
+		if i % 4 == 0 then
+			agent:MoveTo(goal) -- destruir com um cálculo de rota em andamento
+			task.wait()
+		end
+		agent:Destroy()
+		if i % 50 == 0 then
+			task.wait(0.1)
+		end
+	end
+	-- deixa terminar os cálculos pendentes dos agentes já destruídos
+	waitUntil(function()
+		return SmartPath.Scheduler.getQueueLength() == 0
+	end, 20)
+	task.wait(1)
+	local memAfter = lowestMemoryKb(6)
+	local instancesAfter = instanceCount()
+	local mbAfter = StatsService:GetTotalMemoryUsageMb()
+	local queue = SmartPath.Scheduler.getQueueLength()
+	local growthKb = memAfter - memBefore
+	return report(
+		"Fase 8: criar e destruir 500 agentes (parte deles com cálculo em andamento) não vaza",
+		growthKb < 1536 and instancesAfter - instancesBefore <= 5 and queue == 0,
+		string.format(
+			"memória do Lua %.0f -> %.0f KB (%+.0f KB); memória total %.1f -> %.1f MB; instâncias %d -> %d; fila do Scheduler %d",
+			memBefore,
+			memAfter,
+			growthKb,
+			mbBefore,
+			mbAfter,
+			instancesBefore,
+			instancesAfter,
+			queue
+		)
+	)
+end
+
+function Tests.Phase8(): boolean
+	print("[SmartPathTests] ==== Fase 8: endurecimento ====")
+	local errors, stopCapture = captureErrors()
+	local results = {
+		safe("morrer na rota", testDeathMidRoute),
+		safe("morrer no ar", testDeathInAir),
+		safe("personagem removido", testCharacterDestroyed),
+		safe("WalkSpeed 0", testWalkSpeedZero),
+		safe("WalkSpeed 0 com timeout", testWalkSpeedZeroTimeout),
+		safe("sentado", testSeated),
+		safe("JumpHeight 0", testJumpHeightZero),
+		safe("UseJumpPower", testUseJumpPower),
+		safe("rig R15 real", function()
+			return testRigType(Enum.HumanoidRigType.R15)
+		end),
+		safe("rig R6 real", function()
+			return testRigType(Enum.HumanoidRigType.R6)
+		end),
+		safe("destino igual à posição", testDestinationSameAsPosition),
+		safe("destino NaN", testNonFiniteDestination),
+		safe("destino a 5000 studs", testFarDestination),
+		safe("sem chão", testNoGround),
+		safe("gravidade", testGravity),
+		safe("dois agentes", testTwoAgents),
+		safe("reentrância", testReentrancy),
+		safe("StreamingEnabled", testStreamingRegion),
+		safe("500 agentes", testLeak500),
+	}
+	task.wait(0.5)
+	stopCapture()
+	local noErrors = report(
+		"Fase 8: nenhum erro não tratado chegou ao Output durante os casos-limite",
+		#errors == 0,
+		if #errors == 0 then "0 erros" else string.format("%d erros; o primeiro: %s", #errors, errors[1])
+	)
+	local allOk = noErrors
+	for _, ok in ipairs(results) do
+		allOk = allOk and ok
+	end
+	print("[SmartPathTests] ==== Resultado: " .. (allOk and "TUDO PASSOU" or "HÁ FALHAS ACIMA") .. " ====")
+	return allOk
+end
+
+-- ----- 13. Soak: 20 NPCs por N minutos -----
+
+local SOAK_NPCS = 20
+local SOAK_SAMPLE_INTERVAL = 30
+
+function Tests.Phase8Soak(minutes: number?): boolean
+	local duration = (minutes or 10) * 60
+	print(string.format("[SmartPathTests] ==== Fase 8 (soak): %d NPCs por %.0f min ====", SOAK_NPCS, duration / 60))
+	local errors, stopCapture = captureErrors()
+	local area = newArea()
+	addFloor(area, "Floor", 0, 0, 120, 60)
+	for i, p in ipairs({ Vector3.new(-25, 4, -14), Vector3.new(-25, 4, 14), Vector3.new(-5, 4, 0), Vector3.new(15, 4, -14), Vector3.new(15, 4, 14) }) do
+		addBlock(area, "Pillar" .. i, p, Vector3.new(4, 8, 4))
+	end
+	task.wait(NAVMESH_SETTLE)
+
+	-- Rigs mínimos (uma caixa 2x2x1) que se sobrepõem são lançados para cima pela resolução de colisão da
+	-- física (visto no primeiro soak: NPCs voando e caindo, ~14% de falhas). O soak mede memória, não
+	-- multidão, então os rigs não colidem entre si (grupo próprio, restaurado no fim).
+	local groupName = "SmartPathSoakNPCs"
+	local PhysicsServiceForSoak = game:GetService("PhysicsService")
+	pcall(function()
+		PhysicsServiceForSoak:RegisterCollisionGroup(groupName)
+	end)
+	pcall(function()
+		PhysicsServiceForSoak:CollisionGroupSetCollidable(groupName, groupName, false)
+	end)
+
+	local rigs: { Model } = {}
+	for i = 1, SOAK_NPCS do
+		local z = -25 + (i - 1) * (50 / (SOAK_NPCS - 1))
+		local rig = makeRig(area, TEST_ORIGIN + Vector3.new(-50, 0, z))
+		for _, d in ipairs(rig:GetDescendants()) do
+			if d:IsA("BasePart") then
+				d.CollisionGroup = groupName
+			end
+		end
+		table.insert(rigs, rig)
+	end
+
+	local running = true
+	local legsOk, legsFail = 0, 0
+	local failReasons: { [string]: number } = {}
+	local rng = Random.new(20)
+	for i, rig in ipairs(rigs) do
+		local west = i % 2 == 0
+		task.spawn(function()
+			while running do
+				west = not west
+				local x = if west then -rng:NextNumber(38, 52) else rng:NextNumber(38, 52)
+				local goal = TEST_ORIGIN + Vector3.new(x, 0, rng:NextNumber(-24, 24))
+				local agent = SmartPath.MoveToAsync(rig, goal, baseOptions() :: any)
+				local ok, reason = agent:Await()
+				if not running then
+					break
+				end
+				if ok then
+					legsOk += 1
+				else
+					legsFail += 1
+					failReasons[tostring(reason)] = (failReasons[tostring(reason)] or 0) + 1
+					task.wait(0.5)
+				end
+			end
+		end)
+	end
+
+	local samples: { { t: number, lua: number, mb: number, instances: number } } = {}
+	local t0 = os.clock()
+	local nextSample = 0
+	while os.clock() - t0 < duration do
+		if os.clock() - t0 >= nextSample then
+			nextSample += SOAK_SAMPLE_INTERVAL
+			local sample = {
+				t = os.clock() - t0,
+				lua = gcinfo(),
+				mb = StatsService:GetTotalMemoryUsageMb(),
+				instances = instanceCount(),
+			}
+			table.insert(samples, sample)
+			print(
+				string.format(
+					"[SmartPathTests] soak %4.0fs: memória do Lua %.0f KB, total %.1f MB, instâncias %d, trechos %d ok / %d falhas",
+					sample.t,
+					sample.lua,
+					sample.mb,
+					sample.instances,
+					legsOk,
+					legsFail
+				)
+			)
+		end
+		task.wait(1)
+	end
+	running = false
+	task.wait(1)
+	stopCapture()
+
+	-- compara a média das 3 primeiras amostras depois do aquecimento com a das 3 últimas
+	local function avg(from: number, to: number, key: string): number
+		local sum, n = 0, 0
+		for i = from, to do
+			local s = samples[i]
+			if s then
+				sum += (s :: any)[key]
+				n += 1
+			end
+		end
+		return if n > 0 then sum / n else 0
+	end
+	local firstFrom = math.min(3, #samples)
+	local firstTo = math.min(5, #samples)
+	local lastFrom = math.max(#samples - 2, 1)
+	local luaGrowth = avg(lastFrom, #samples, "lua") - avg(firstFrom, firstTo, "lua")
+	local mbGrowth = avg(lastFrom, #samples, "mb") - avg(firstFrom, firstTo, "mb")
+	local instanceGrowth = avg(lastFrom, #samples, "instances") - avg(firstFrom, firstTo, "instances")
+	local stable = #samples >= 4 and luaGrowth < 2048 and instanceGrowth < 60
+	local reasonParts = {}
+	for reason, count in pairs(failReasons) do
+		table.insert(reasonParts, string.format("%s %d", reason, count))
+	end
+	table.sort(reasonParts)
+	info("motivos das falhas do soak", if #reasonParts > 0 then table.concat(reasonParts, ", ") else "nenhuma")
+	cleanupArea()
+	local ok = report(
+		string.format("Fase 8: %d NPCs por %.0f minutos, memória estável", SOAK_NPCS, duration / 60),
+		stable and legsOk > 0 and #errors == 0,
+		string.format(
+			"memória do Lua %+.0f KB, total %+.1f MB, instâncias %+.0f entre o início e o fim; trechos %d ok / %d falhas; erros no Output: %d",
+			luaGrowth,
+			mbGrowth,
+			instanceGrowth,
+			legsOk,
+			legsFail,
+			#errors
+		)
+	)
+	print("[SmartPathTests] ==== Resultado: " .. (ok and "TUDO PASSOU" or "HÁ FALHAS ACIMA") .. " ====")
+	return ok
+end
+
 return Tests

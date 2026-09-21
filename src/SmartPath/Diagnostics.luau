@@ -58,6 +58,10 @@ end
 -- Uma função por código. Cada uma tolera details incompleto: explain nunca pode errar.
 local explainers: { [string]: (d: Details) -> string } = {
 	[Errors.NoPath] = function(d)
+		if d.noGround then
+			return "O agente não tem chão sob os pés (está em queda ou fora do mapa), então não há de onde "
+				.. "calcular uma rota."
+		end
 		return string.format(
 			"Não existe rota até o destino, nem depois de tentar os raios %s. Confira se há chão contínuo entre "
 				.. "os dois pontos e se algum obstáculo fechado isola o destino.",

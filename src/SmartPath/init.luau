@@ -46,47 +46,72 @@ SmartPath.Service = Compat.Service
 
 -- ===== Nível 1 — agente persistente (Seção 3.2) =====
 
+-- Um agente por personagem, para os níveis 0 e 1 (D-033): dois agentes no mesmo Humanoid brigariam
+-- pelo Humanoid:Move. `SmartPath.new` recusa criar um segundo; `SmartPath.MoveTo` reaproveita o
+-- que existir (inclusive um criado com `new`).
+local agents: { [Humanoid]: Agent.Agent } = setmetatable({}, { __mode = "k" }) :: any
+local watching: { [Humanoid]: boolean } = setmetatable({}, { __mode = "k" }) :: any
+
+local function register(humanoid: Humanoid, agent: Agent.Agent)
+	agents[humanoid] = agent
+	if not watching[humanoid] then
+		watching[humanoid] = true
+		humanoid.Destroying:Connect(function()
+			local current = agents[humanoid]
+			agents[humanoid] = nil
+			watching[humanoid] = nil
+			if current then
+				current:Destroy()
+			end
+		end)
+	end
+end
+
+local function alive(agent: Agent.Agent?): boolean
+	return agent ~= nil and not (agent :: any)._destroyed
+end
+
+local DUPLICATE_MESSAGE = "SmartPath.new: já existe um agente para este personagem. Use SmartPath.MoveTo (reaproveita "
+	.. "o agente) ou chame :Destroy() no anterior antes de criar outro."
+
 function SmartPath.new(characterOrHumanoid: Types.CharacterLike, options: Types.Options?): Agent.Agent
-	return Agent.new(characterOrHumanoid, options)
+	local before = Util.resolveHumanoid(characterOrHumanoid)
+	if before and alive(agents[before]) then
+		error(DUPLICATE_MESSAGE, 2)
+	end
+	local agent = Agent.new(characterOrHumanoid, options)
+	local humanoid = agent.Humanoid
+	if alive(agents[humanoid]) then
+		agent:Destroy() -- o personagem ainda carregava e outra chamada ganhou a corrida
+		error(DUPLICATE_MESSAGE, 2)
+	end
+	register(humanoid, agent)
+	return agent
 end
 
 -- ===== Nível 0 — uma linha (Seção 3.1) =====
 
--- Um agente por Humanoid, reaproveitado entre chamadas: MoveTo em laço não cria um agente (com
+-- Nível 0: um agente por Humanoid, reaproveitado entre chamadas. MoveTo em laço não cria um agente (com
 -- suas conexões) a cada chamada, e duas chamadas para o mesmo personagem se cancelam em vez de
 -- brigar pelo Move (a antiga devolve false, "cancelled"). Chaves fracas; quando o Humanoid é
 -- destruído o agente é destruído junto e a entrada some (o agente referencia o Humanoid, então
--- só a entrada explícita evita que o par se segure mutuamente).
-local agents: { [Humanoid]: Agent.Agent } = setmetatable({}, { __mode = "k" }) :: any
-local watching: { [Humanoid]: boolean } = setmetatable({}, { __mode = "k" }) :: any
+-- só a entrada explícita evita que o par se segure mutuamente). O registro é o de SmartPath.new.
 
 local function agentFor(characterLike: Types.CharacterLike, options: Types.Options?): Agent.Agent
 	local humanoid = Util.resolveHumanoid(characterLike)
 	if not humanoid then
 		error("SmartPath: o personagem precisa de um Humanoid", 3)
 	end
-	local agent: Agent.Agent? = agents[humanoid]
-	if agent and (agent :: any)._destroyed then
-		agent = nil
-	end
-	if not agent then
-		agent = Agent.new(humanoid, options)
-		agents[humanoid] = agent
-		if not watching[humanoid] then
-			watching[humanoid] = true
-			humanoid.Destroying:Connect(function()
-				local current = agents[humanoid]
-				agents[humanoid] = nil
-				watching[humanoid] = nil
-				if current then
-					current:Destroy()
-				end
-			end)
+	local existing = agents[humanoid]
+	if existing and alive(existing) then
+		if options then
+			existing:SetOptions(options)
 		end
-	elseif options then
-		agent:SetOptions(options)
+		return existing
 	end
-	return agent :: Agent.Agent
+	local created = Agent.new(humanoid, options)
+	register(humanoid, created)
+	return created
 end
 
 -- Move e só retorna quando terminar (bloqueante). target: Vector3 | BasePart | Model.

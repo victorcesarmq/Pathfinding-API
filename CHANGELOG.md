@@ -130,3 +130,13 @@ Formato: [Keep a Changelog](https://keepachangelog.com/). Versionamento semânti
   `Phase2` ganhou o teste "quina de pilar".
 - Ao pousar de um salto o agente não volta ao waypoint `Jump` que já ultrapassou (D-032). A mobília
   do cenário 2 do demo passou a 6-8 studs (a de 3 era pulada).
+
+### Added — Fase 8 (endurecimento)
+- Casos-limite tratados (D-033): personagem removido destrói o agente; WalkSpeed 0, sentado e
+  PlatformStand não viram `stuck`; `Jump.Enabled` derivado do Humanoid; destino igual à posição;
+  destino NaN; sem chão sob o agente (`no_path` com `noGround`); `SmartPath.new` recusa um segundo
+  agente para o mesmo personagem; `RequestStreamAroundAsync` no cliente com StreamingEnabled.
+- `SmartPathTests.Phase8()`: um teste por caso da checklist e o de 500 agentes; `Phase8Soak(min)`: 20
+  NPCs por N minutos com memória amostrada a cada 30 s.
+- Demo: cenários 9 a 11 (caverna com zona invisível colidível cobrindo o interior): entrar, sair e
+  mover-se dentro. Rodam pelo HUD ou por `run:9`, `run:10`, `run:11`.

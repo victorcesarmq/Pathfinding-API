@@ -1,6 +1,6 @@
 --!strict
 -- Main.server.luau
--- Ponto de entrada do place de demonstração: monta os 8 cenários e liga os botões do HUD.
+-- Ponto de entrada do place de demonstração: monta os 11 cenários e liga os botões do HUD.
 --
 -- Comandos sem HUD. A Command Bar do Studio NÃO compartilha os módulos do servidor (um require dela
 -- devolve uma cópia vazia do Runner), então os comandos passam por um atributo desta pasta:

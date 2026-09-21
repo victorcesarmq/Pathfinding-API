@@ -9,6 +9,9 @@ local Util = require(script.Parent.Util)
 
 local Config = {}
 
+-- abaixo disto o Humanoid não passa nem de um degrau (Predictor: MIN_OBSTACLE_HEIGHT)
+local MIN_JUMP_HEIGHT = 1.2
+
 local Defaults: Types.Options = {
 	Indoor = {
 		AdaptiveRadius = true,
@@ -101,6 +104,13 @@ function Config.resolve(character: Types.CharacterLike, overrides: Types.Options
 
 	if merged.Jump.MaxHeight == nil then
 		merged.Jump.MaxHeight = humanoid and Util.getMaxJumpHeight(humanoid) or 7.2
+	end
+
+	-- Um Humanoid que não salta (JumpHeight 0, JumpPower 0) não pode ganhar rotas com saltos: se o
+	-- usuário não decidiu, Jump.Enabled é derivado do personagem (D-033). Vale na criação e no SetOptions.
+	local userJump = overrides and overrides.Jump
+	if not (userJump and userJump.Enabled ~= nil) and humanoid and Util.getMaxJumpHeight(humanoid) < MIN_JUMP_HEIGHT then
+		merged.Jump.Enabled = false
 	end
 
 	return merged :: Types.ResolvedOptions

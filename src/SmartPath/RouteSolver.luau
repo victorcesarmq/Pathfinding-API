@@ -837,6 +837,11 @@ function RouteSolver.solve(
 			return nil, Errors.CharacterLost, {}
 		end
 		local groundHit = Util.groundBelow(root.Position, options.Agent.Height + GROUND_PROBE_EXTRA, params)
+		if not groundHit and humanoid.FloorMaterial == Enum.Material.Air then
+			-- ainda no ar depois de esperar aterrar e sem chão embaixo (queda infinita, fora do mapa):
+			-- nenhuma rota sai de um ponto no vazio, então nem chama a engine (D-033)
+			return nil, Errors.NoPath, { triedRadii = {}, noGround = true }
+		end
 		startGround = groundHit and groundHit.Position or root.Position
 	end
 	return solveFrom(params, target, goalRaw, startGround, options, cache)

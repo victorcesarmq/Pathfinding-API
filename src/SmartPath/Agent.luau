@@ -79,6 +79,16 @@ local START_INDEX_LOOKAHEAD = 5
 local JUMP_LINK_LABEL = "JumpLink" -- Label de PathfindingLink tratado como salto (v2)
 local DEBUG_LIFETIME = 6
 local LOAD_TIMEOUT = 5 -- espera por Humanoid/HumanoidRootPart de um personagem ainda carregando
+-- Endurecimento (Fase 8, D-033)
+-- Personagem removido do jogo: o agente falha com character_lost e se destrói depois deste atraso, para
+-- que os handlers de Failed rodem antes (o BindableEvent entrega no ciclo seguinte).
+local REMOVED_DESTROY_DELAY = 0.5
+-- Destino já ao alcance: não há o que calcular (MoveTo até onde se está).
+local ALREADY_THERE_HEIGHT_TOLERANCE = 6
+-- StreamingEnabled no cliente: pede a região do destino só se ele está longe o bastante para ainda
+-- não ter sido enviada, e espera no máximo isto.
+local STREAM_REQUEST_MIN_DISTANCE = 100
+local STREAM_REQUEST_TIMEOUT = 2
 -- Diagnóstico de travamento (Fase 6): ao esgotar o anti-stuck, procura à frente uma parte
 -- invisível colidível. Parte de um pouco atrás para que uma parede encostada no corpo não fique
 -- na origem do Spherecast (que ignora o que sobrepõe a origem, D-014).
@@ -288,6 +298,11 @@ function Agent.new(characterOrHumanoid: Types.CharacterLike, options: Types.Opti
 	local function onRemoved(_, parent: Instance?)
 		if not parent then
 			self:_onCharacterLost()
+			task.delay(REMOVED_DESTROY_DELAY, function()
+				if not self._destroyed then
+					self:Destroy()
+				end
+			end)
 		end
 	end
 	table.insert(self._connections, humanoid.AncestryChanged:Connect(onRemoved))
@@ -338,6 +353,12 @@ function Agent.MoveTo(self: Agent, target: Types.TargetLike)
 
 	if self.Humanoid.Health <= 0 or not self.Root.Parent then
 		self:_fail(Errors.CharacterLost, {})
+		return
+	end
+	-- NaN ou infinito vindo de um cálculo do jogo: não é um lugar; falha em vez de propagar NaN
+	local m = goal.X + goal.Y + goal.Z
+	if m ~= m or math.abs(m) == math.huge then
+		self:_fail(Errors.GoalUnreachable, { requestedGoal = goal })
 		return
 	end
 	self:_requestPlan(true)
@@ -647,6 +668,34 @@ function Agent._plan(self: Agent)
 		self._goal = Util.resolveTargetPosition(target) or self._goal
 	end
 	self._plannedGoal = self._goal
+
+	-- destino igual à posição (ou a menos de um raio de chegada): já chegou, sem calcular rota
+	local here = self.Root.Position
+	local plannedGoal = self._goal
+	if
+		plannedGoal
+		and Util.flat(plannedGoal - here).Magnitude <= ARRIVE_RADIUS
+		and math.abs(plannedGoal.Y - here.Y) <= math.max(self.Options.Agent.Height, ALREADY_THERE_HEIGHT_TOLERANCE)
+	then
+		self._planning = false
+		self:_arrive()
+		return
+	end
+
+	-- StreamingEnabled: no cliente, a geometria perto do destino pode nem existir ainda
+	if
+		plannedGoal
+		and workspace.StreamingEnabled
+		and RunService:IsClient()
+		and (plannedGoal - here).Magnitude > STREAM_REQUEST_MIN_DISTANCE
+	then
+		local player = Players.LocalPlayer
+		if player then
+			pcall(function()
+				player:RequestStreamAroundAsync(plannedGoal, STREAM_REQUEST_TIMEOUT)
+			end)
+		end
+	end
 
 	local t0 = os.clock()
 	local wps, reason, details = RouteSolver.solve(self.Humanoid, target, self.Options)
@@ -1039,8 +1088,12 @@ function Agent._jumpToward(self: Agent, target: Vector3): boolean
 	end
 	local userMax = self._userOptions.Jump and self._userOptions.Jump.MaxHeight
 	local dir = Util.flat(target - self.Root.Position)
+	local maxHeight = userMax or Util.getMaxJumpHeight(self.Humanoid)
+	if maxHeight <= 0 then
+		return false -- JumpHeight 0: pedir um salto não faz nada
+	end
 	return self:_executeJump(
-		userMax or Util.getMaxJumpHeight(self.Humanoid),
+		maxHeight,
 		if dir.Magnitude > 1e-3 then dir.Unit else nil,
 		target,
 		nil
@@ -1061,6 +1114,13 @@ function Agent._checkStuck(self: Agent)
 	local now = os.clock()
 	local pos = self.Root.Position
 	local s = self._stuck
+	-- WalkSpeed 0, sentado ou em PlatformStand: o corpo não anda de propósito (stun, veículo). Isso
+	-- não é "travado": o agente espera, e o orçamento de tempo (timeout) é a rede de segurança.
+	local h = self.Humanoid
+	if h.WalkSpeed <= 0 or h.Sit or h.PlatformStand then
+		s.lastPos = nil
+		return
+	end
 	if not s.lastPos then
 		s.lastPos, s.lastTime = pos, now
 		return

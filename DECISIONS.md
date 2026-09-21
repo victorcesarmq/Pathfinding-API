@@ -481,3 +481,45 @@ de demonstração tem de exercitar a capacidade que nomeia.
 Consequência: (1) uma rota que termina num waypoint `Jump` continua sendo concluída pelo raio de
 chegada, que não mudou. (2) o cenário 2 pode passar a discriminar os dois lados, ou não; depende
 do que a engine faz com o corredor de 3.2 studs, e o próximo relatório diz.
+
+## D-033 — Endurecimento: comportamento documentado dos casos-limite
+Data: 2026-09-21
+Contexto: a Fase 8 percorre a checklist de casos-limite. A leitura do código antes de escrever os
+testes mostrou vários sem comportamento definido (o agente "travava" onde na verdade o corpo não
+podia andar; dois agentes no mesmo Humanoid; queda sem fim chamando a engine à toa).
+Decisão, caso a caso:
+- Personagem morre (na rota ou no ar): `character_lost`; o `JumpExecutor` restaura o JumpHeight.
+- Personagem removido do jogo (`Destroy`, pai nil): `character_lost` e o agente se destrói 0.5 s
+  depois (os handlers de `Failed` rodam antes). Antes ele ficava com 5 conexões vivas até alguém
+  chamar `Destroy`. Personagem que só morreu NÃO destrói o agente (a engine o remove depois).
+- `WalkSpeed` 0, `Humanoid.Sit` ou `PlatformStand`: o corpo não anda de propósito (stun, veículo);
+  isso não é `stuck`. O anti-stuck ignora, o agente espera e retoma quando o corpo volta a andar; a
+  rede de segurança é o `timeout` (D-025).
+- `JumpHeight` 0 (ou `JumpPower` 0): `Jump.Enabled` é DERIVADO do personagem quando o usuário não o
+  definiu (`Config.resolve`, na criação e no `SetOptions`); a rota não tem saltos e um obstáculo sem
+  passagem dá `no_path`. Um pedido de salto com altura 0 não faz nada em vez de simular um pulo.
+- `UseJumpPower` verdadeiro: já era coberto (`getMaxJumpHeight` usa JumpPower²/2g; `JumpExecutor`
+  restaura o JumpPower).
+- R6 e R15: tudo é derivado do bounding box e de `Util.getFeetY`; testado com rigs reais, zero opções.
+- Destino igual à posição (a menos do raio de chegada, 1.25, e de uma tolerância de altura): chega na
+  hora, sem chamar o solver. Destino NaN ou infinito: `goal_unreachable`, sem propagar NaN.
+- Destino a 5000 studs: sem chão lá, `goal_unreachable` (a projeção do destino falha); ilha isolada,
+  `no_path`. Sem nada especial para distâncias grandes.
+- Sem chão sob o agente (queda infinita, fora do mapa): depois de esperar aterrar (1.5 s), se não há
+  chão embaixo e o `FloorMaterial` continua `Air`, o solver devolve `no_path` com `noGround = true`
+  sem chamar a engine. `explain` diz isso.
+- `workspace.Gravity` alterado: o `Predictor` e o `JumpExecutor` já liam a gravidade viva.
+- Dois agentes no mesmo personagem: `SmartPath.new` dá ERRO CLARO se já existe um agente vivo para o
+  Humanoid; `SmartPath.MoveTo` reaproveita o existente (inclusive um criado com `new`). O registro é
+  um só para os dois níveis; depois de `:Destroy()` pode criar outro. `Agent.new` (nível 2) não
+  restringe.
+- `MoveTo` dentro de `Reached` ou de `Failed`: já funcionava (o sinal dispara por último e a sessão
+  nova não é atropelada); agora é teste.
+- StreamingEnabled: no CLIENTE, antes de calcular uma rota para um destino a mais de 100 studs, o
+  agente chama `Player:RequestStreamAroundAsync(destino, 2)` (protegido por pcall). No servidor não faz
+  nada. Uma região não carregada, enquanto isso, é um destino sem chão: `goal_unreachable`. [VALIDAR]
+  em um jogo real com StreamingEnabled: não há como ligar streaming em um teste de servidor.
+Motivo: uma biblioteca é o que ela faz nos casos que o autor não pensou; cada um deles agora tem um
+resultado previsível e um teste.
+Consequência: `Config.resolve` passa a devolver `Jump.Enabled = false` para um Humanoid que não salta,
+mesmo sem o usuário pedir; quem quiser forçar passa `Jump = { Enabled = true }`.

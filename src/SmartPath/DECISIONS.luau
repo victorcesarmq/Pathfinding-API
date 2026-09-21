@@ -342,4 +342,17 @@ Decisão: _selectStartIndex ganhou afterLanding: no pouso, um waypoint Jump já 
 como alcançado. A mobília do cenário 2 passou a 6-8 studs.
 Motivo: o destino do salto é referência, não parada; o demo tem de exercitar o que nomeia.
 Consequência: o raio de chegada não mudou; o cenário 2 pode ou não discriminar os lados.
+
+## D-033 — Endurecimento: comportamento documentado dos casos-limite
+Data: 2026-09-21
+Contexto: a Fase 8 percorre a checklist de casos-limite; vários não tinham comportamento definido.
+Decisão: morrer = character_lost (JumpHeight restaurado); personagem removido = character_lost e o
+agente se destrói 0.5 s depois; WalkSpeed 0, Sit e PlatformStand não contam como stuck (o agente
+espera; timeout é a rede de segurança); Jump.Enabled é derivado do Humanoid quando o usuário não o
+definiu (JumpHeight 0 = sem saltos); destino igual à posição chega na hora; destino NaN/infinito =
+goal_unreachable; sem chão sob o agente = no_path com noGround sem chamar a engine; SmartPath.new
+dá erro claro se já existe agente para o Humanoid e MoveTo reaproveita; no cliente com
+StreamingEnabled pede RequestStreamAroundAsync antes de rotas longas [VALIDAR].
+Motivo: cada caso passa a ter resultado previsível e teste.
+Consequência: Config.resolve devolve Jump.Enabled = false para quem não salta, salvo pedido explícito.
 ]]
