@@ -70,7 +70,6 @@ Prefiro dizer aqui do que descobrir no seu jogo:
 
 ## Instalação
 
-- **Wally:** `SmartPath = "seu-usuario/smartpath@1.0.0"`
 - **Modelo do Creator Store:** [LINK: modelo]
 - **GitHub:** [LINK: repositório] (MIT)
 

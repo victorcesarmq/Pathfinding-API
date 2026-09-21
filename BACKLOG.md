@@ -71,3 +71,6 @@ autorização.
 - **GIFs do antes/depois** (Fase 9): não foram gravados; a lista de cenas está em `docs/PUBLISHING.md`.
 - **Validar o passo a passo do README com uma pessoa** (Fase 9): o critério "instala e move um NPC em
   menos de 5 minutos" precisa de alguém que nunca viu o projeto.
+- **Distribuição sem Rojo nem Wally** (D-036): quem clona o repositório monta os módulos à mão no
+  Studio. Se a instalação por linha de comando fizer falta, o caminho é reintroduzir o Wally (com o
+  `default.project.json` que ele exige) ou publicar um `.rbxm` pronto nas Releases do GitHub.

@@ -562,3 +562,19 @@ extra de validação por arco.
 Consequência: `GetRoute` e o `Debug` continuam mostrando a poligonal, não a trajetória. Os valores
 (0.3 s, 3 a 8 studs) são [VALIDAR] no rig do jogo. Custo: uma varredura a mais por agente a cada 0.1 s,
 só com a opção ligada.
+
+## D-036 — Rojo e Wally ficam fora do repositório
+Data: 2026-09-21
+Contexto: a D-034 criou `default.project.json` (só a biblioteca), `wally.toml` e `dev.project.json`. O
+dono decidiu que o repositório deve conter apenas a SmartPath e o que a acompanha (testes, demo,
+documentação), sem a infraestrutura de Rojo e de Wally.
+Decisão: `default.project.json`, `dev.project.json`, `demo.project.json`, `wally.toml`, `aftman.toml`,
+`sourcemap.json` e os stubs "Hello world" de `src/client`, `src/server` e `src/shared` vão para o
+`.gitignore` (o dono continua com eles no disco, para sincronizar com o Studio). README, `PUBLISHING.md`
+e o post deixam de citar os dois: a instalação passa a ser o modelo do Creator Store ou a montagem
+manual dos arquivos de `src/SmartPath`. Supera a parte de empacotamento da D-034; o idioma e a
+licença dela continuam valendo.
+Motivo: o repositório público mostra só o que é da biblioteca.
+Consequência: não há Wally; quem clona o repositório não consegue `rojo build` e precisa montar os
+módulos no Studio à mão (17 `ModuleScript`s filhos de `SmartPath`), o que é trabalhoso; o modelo do Creator
+Store passa a ser o caminho prático de instalação. Reintroduzir o Rojo ou o Wally é reverter esta decisão.

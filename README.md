@@ -41,25 +41,16 @@ Os cenários e o código de cada teste estão em [`src/demo`](src/demo). Veja em
 
 Escolha uma.
 
-**Wally**
-
-```toml
-# wally.toml do seu projeto
-[dependencies]
-SmartPath = "seu-usuario/smartpath@1.0.0"
-```
-
 **Modelo do Creator Store.** Pegue o modelo `SmartPath`, coloque-o em `ReplicatedStorage` e pronto.
 
-**Rojo.** Copie a pasta [`src/SmartPath`](src/SmartPath) para o seu projeto e mapeie:
+**Manual, a partir dos arquivos deste repositório.** A pasta [`src/SmartPath`](src/SmartPath) vira **um `ModuleScript` chamado `SmartPath`** em `ReplicatedStorage`, e cada outro arquivo da pasta vira um `ModuleScript` **filho** dele, com o mesmo nome (sem `.luau`):
 
-```json
-"ReplicatedStorage": {
-  "SmartPath": { "$path": "src/SmartPath" }
-}
-```
+| Arquivo | ModuleScript |
+|---|---|
+| `init.luau` | `SmartPath` (o pai, o que você dá `require`) |
+| `Agent`, `Compat`, `Config`, `Debug`, `Diagnostics`, `Errors`, `Geometry`, `JumpExecutor`, `Predictor`, `RouteCache`, `RouteSolver`, `Scheduler`, `Signal`, `Simplifier`, `Types`, `Util` | um filho de `SmartPath` para cada |
 
-**Manual.** Coloque a pasta `SmartPath` (um `ModuleScript` com filhos) em `ReplicatedStorage`.
+O arquivo `DECISIONS.luau` é só um espelho em texto de [DECISIONS.md](DECISIONS.md) e o código não o usa: pode ficar de fora.
 
 Não há dependências. Foi feita para o servidor (NPCs) e para o cliente (o personagem do jogador), mas **só o servidor foi validado num jogo real**: veja [Limitações](#limitações-o-que-a-smartpath-não-faz).
 
@@ -245,23 +236,17 @@ Uma biblioteca que promete demais queima reputação no primeiro bug. Isto é o 
 
 ## Desenvolvimento
 
-O repositório tem três projetos Rojo:
+Este repositório contém só a SmartPath e o que a acompanha:
 
-| Arquivo | O que monta |
+| Pasta ou arquivo | O que é |
 |---|---|
-| `default.project.json` | Só a biblioteca (é o que o Wally e o Creator Store empacotam). |
-| `dev.project.json` | A biblioteca e os testes (`ServerStorage.SmartPathTests`). |
-| `demo.project.json` | A biblioteca, o place de demonstração e o HUD. |
+| `src/SmartPath` | A biblioteca. |
+| `src/tests/init.luau` | Os testes de cada fase (um `ModuleScript` `SmartPathTests` em `ServerStorage`). |
+| `src/demo` | O place de demonstração: `server/` (o `Script` `Main` e os módulos `Rigs`, `Classic`, `Scenarios`, `Runner`, em `ServerScriptService.SmartPathDemo`) e `client/HUD.client.luau` (um `LocalScript` em `StarterPlayerScripts`). |
+| `docs/API.md` | A referência da API. |
+| [DECISIONS.md](DECISIONS.md), [CHANGELOG.md](CHANGELOG.md), [BACKLOG.md](BACKLOG.md) | As decisões de projeto, o histórico e o que ficou para depois. |
 
-```bash
-rojo serve dev.project.json                              # testes no Studio
-rojo build demo.project.json -o SmartPathDemo.rbxlx      # o demo (abra e dê Play)
-rojo build default.project.json -o SmartPath.rbxm        # o modelo da biblioteca
-```
-
-Testes (Studio, em **Run**, na Command Bar): `require(game.ServerStorage.SmartPathTests).Phase1()` até `Phase8()`, e `Phase8Soak(10)` para 20 NPCs por 10 minutos.
-
-As decisões de projeto estão em [DECISIONS.md](DECISIONS.md), o histórico em [CHANGELOG.md](CHANGELOG.md) e o que ficou para depois em [BACKLOG.md](BACKLOG.md).
+Os testes rodam no Studio, em **Run**, pela Command Bar: `require(game.ServerStorage.SmartPathTests).Phase1()` até `Phase8()`, mais `Curves()` (e `Curves(true)` para ver a rota e o rastro de cada trajetória) e `Phase8Soak(10)` para 20 NPCs por 10 minutos. O demo se comanda pelo HUD ou por atributos da pasta `SmartPathDemo` (veja o comentário no topo de `src/demo/server/Main.server.luau`).
 
 ## Licença
 

@@ -376,4 +376,15 @@ Jump/Custom e o último); a distância é validada por Spherecast do corpo e cai
 cabe. Um waypoint macio conta como alcançado quando o agente passa dele. Desligado, nada muda.
 Motivo: a menor mudança que dá trajetória suave sem tocar na rota, no cache nem na validação.
 Consequência: GetRoute e Debug seguem mostrando a poligonal; valores [VALIDAR].
+
+## D-036 — Rojo e Wally ficam fora do repositório
+Data: 2026-09-21
+Contexto: a D-034 criou default.project.json, wally.toml e dev.project.json; o dono decidiu que o
+repositório contém só a SmartPath, os testes, o demo e a documentação.
+Decisão: os arquivos de Rojo e de Wally (e os stubs Hello world) vão para o .gitignore e continuam no
+disco do dono; a documentação deixa de citá-los. A instalação é o modelo do Creator Store ou a
+montagem manual dos arquivos de src/SmartPath. Supera o empacotamento da D-034.
+Motivo: o repositório público mostra só o que é da biblioteca.
+Consequência: sem Wally e sem rojo build para quem clona; montar os módulos no Studio à mão dá
+trabalho e o modelo do Creator Store vira o caminho prático.
 ]]

@@ -1,11 +1,49 @@
-# Project place file
-/Pathfinding-API.rbxlx
+# ---- Saídas de build (qualquer um regera com `rojo build`) ----
+*.rbxlx
+*.rbxl
+*.rbxm
+*.rbxmx
+*.zip
 
-# Roblox Studio lock files
-/*.rbxlx.lock
-/*.rbxl.lock
+# Arquivos de trava do Roblox Studio
+*.rbxlx.lock
+*.rbxl.lock
+*.rbxm.lock
 
+# Sourcemap gerado pelo Rojo / luau-lsp
 sourcemap.json
 
-/SmartPathDemo.rbxlx
-/SmartPathDemo.rbxlx.lock
+# ---- Dependências instaladas (Wally) ----
+Packages/
+ServerPackages/
+DevPackages/
+
+# ---- Notas internas de desenvolvimento (não servem a quem usa ou contribui) ----
+# Resumos de retomada entre sessões de trabalho
+COMPACT*.md
+# Plano e especificação usados para conduzir o desenvolvimento
+docs/SMARTPATH_PLANO_DE_EXECUCAO.md
+docs/ESPEC_NAVEGACAO_ROBLOX.md
+
+# ---- Editor e sistema operacional ----
+.vscode/
+.idea/
+.claude/
+.DS_Store
+Thumbs.db
+desktop.ini
+*.log
+
+# ---- Rojo e Wally: ferramentas de desenvolvimento locais, fora do repositório (D-036) ----
+default.project.json
+dev.project.json
+demo.project.json
+*.project.json
+wally.toml
+wally.lock
+aftman.toml
+rokit.toml
+# stubs "Hello world" do modelo do Rojo (só serviam ao projeto de desenvolvimento)
+src/client/
+src/server/
+src/shared/

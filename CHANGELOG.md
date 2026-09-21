@@ -35,13 +35,9 @@ Primeira versão pública.
 - **Place de demonstração** com 11 cenários (`PathfindingService` puro à esquerda, SmartPath à
   direita), HUD, relatório e comandos de diagnóstico.
 - Documentação: [README](README.md), [API](docs/API.md), [decisões](DECISIONS.md) e
-  [backlog](BACKLOG.md). Empacotamento: `wally.toml`, `default.project.json` (só a biblioteca),
-  licença MIT.
+  [backlog](BACKLOG.md). Licença MIT.
 
 ### Alterado
-- `default.project.json` agora monta só a biblioteca (é o que o Wally e o Creator Store empacotam).
-  O projeto de desenvolvimento (testes) passou para `dev.project.json`: use
-  `rojo serve dev.project.json`.
 - Pequenas limpezas de tipos sem mudança de comportamento (`RouteCache`, `Geometry`, `Scheduler`,
   `RouteSolver`).
 
@@ -155,7 +151,7 @@ não foi validado num jogo real.
 - D-024 a D-026 em `DECISIONS.md`.
 
 ### Added — Fase 7 (place de demonstração)
-- `demo.project.json` e `src/demo/`: 8 cenários, cada um com o NPC de PathfindingService puro à
+- `src/demo/`: 8 cenários, cada um com o NPC de PathfindingService puro à
   esquerda (`Classic.luau`, o exemplo da documentação da Roblox) e o da SmartPath à direita, sobre
   geometria idêntica. Reiniciar refaz as duas pistas do zero.
 - HUD (`HUD.client.luau`): FPS do cliente e do servidor, fila do `Scheduler`, botões Reiniciar/Ver
