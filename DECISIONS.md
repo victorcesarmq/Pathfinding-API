@@ -308,3 +308,159 @@ Consequência: o último waypoint conta como alcançado a 3 studs do ponto quand
 agente empurrá-lo até cair no anti-stuck). Ao chegar, se o alvo ainda está além de 3.5 studs
 (andou depois do último cálculo), o agente refaz a rota em vez de declarar chegada; termina a no
 máximo 3.5 studs do alvo. Corrigido depois do teste: a primeira versão terminava a até ~5 studs.
+
+## D-024 — Diagnóstico de causa: invisible_collider, obstacle_too_tall e no_landing
+Data: 2026-09-20
+Contexto: a Fase 6 exige que os 10 códigos sejam emitidos. Quatro não saíam de lugar nenhum
+(`obstacle_too_tall`, `no_landing`, `invisible_collider`, `timeout`); o `Predictor` só devolvia
+`too_tall`/`no_landing` como motivo interno, sem medidas.
+Decisão: (1) `Predictor.analyze` ganhou um terceiro retorno com as medidas (`height`+`maxJump`
+para `too_tall`/`insufficient_jump`; `drop` para `no_landing`/`drop_too_high`; `at` = onde está a
+parede; `atLeast = true` quando o raio só prova um mínimo) e a opção `probeDistance`.
+(2) `invisible_collider`: toda falha do `RouteSolver` passa por `fail`, que procura a parte
+invisível colidível (`Geometry.isInvisibleCollider`: `CanCollide`, `Transparency >= 0.95`, sem
+`NavSolid`) no ponto de estrangulamento (`corridor_too_narrow`), no destino (`goal_unreachable`
+por parede) ou na PRIMEIRA batida do Spherecast do corpo na reta início -> destino (`no_path`).
+Achando, o código vira `invisible_collider` com `instance`, `position` e `underlying` (o código
+original). Se o agente trava (`stuck`), o `Agent` faz o mesmo para a frente do corpo, mas SEM o
+filtro da lib: o gatilho que a lib filtrou (a malha o atravessa) e o corpo bate é exatamente o
+caso. (3) `obstacle_too_tall`/`no_landing`: só quando o `Agent` não tem rota (`no_path`), não
+consegue o salto direto e o `Predictor`, olhando a reta inteira até o destino (`probeDistance =
+math.huge`, só na hora de falhar), explica por que o salto é impossível.
+Motivo: parte invisível, obstáculo alto e vazio sem chão são as três causas que o desenvolvedor
+não vê a olho nu e que hoje viravam um `no_path` mudo.
+Consequência: é heurística, e assumida como tal: só a primeira batida conta (uma parede visível
+antes da invisível esconde o diagnóstico, que fica `no_path`), e só o primeiro obstáculo da reta
+é analisado (uma torre alta atrás de um desvio não é apontada). `NavSolid` nunca é suspeito: é
+limite de mapa declarado.
+
+## D-025 — `timeout` é um orçamento interno, não uma opção
+Data: 2026-09-20
+Contexto: o código `timeout {elapsed}` existe no contrato, mas a tabela de opções (Seção 3.5) é
+congelada e não tem campo de tempo máximo.
+Decisão: o `Agent` guarda o instante em que a movimentação começou e falha com `timeout` quando
+`elapsed > 45 + 4 x (maior rota adotada) / WalkSpeed`. O orçamento recomeça quando um alvo móvel
+se afasta (perseguir sem fim não estoura) e não conta o tempo suspenso. As duas constantes ficam
+em `Agent._tuning`, só para os testes encurtarem.
+Motivo: é a rede de segurança para o que o anti-stuck não pega (o agente anda, mas nunca chega).
+Os 45 s cobrem a janela de espera por bloqueio (30 s, D-021) com folga.
+Consequência: [VALIDAR] os valores num jogo real; um agente propositalmente lento em mapa enorme
+pode precisar de mais tempo e não tem como pedir (registrado em `BACKLOG.md`).
+
+## D-026 — Debug em módulo próprio, painel explícito, `explain` em português
+Data: 2026-09-20
+Contexto: os desenhos de debug estavam em `Util` (dois pontos e uma rota) e o plano pede mais:
+waypoints por ação, decolagem, pouso, obstáculo, raio efetivo, painel.
+Decisão: (1) `Debug.luau` concentra pasta, partes, linhas, disco de raio, marcas de obstáculo e
+falha e o painel; `Util.drawPoint/drawRoute/getDebugFolder` foram removidos. Nada aqui roda com
+`Options.Debug = false`: quem chama checa a opção, então não há instância, print nem custo. (2)
+Toda parte de debug: `Anchored` verdadeiro; `CanCollide`, `CanQuery` e `CanTouch` falsos; como
+segunda barreira a pasta entra em todo `RaycastParams` da lib (`Geometry.addExclusion`, que também
+sobe a versão para o `Agent` reconstruir seus params). (3) O painel
+(`SmartPath.Debug.showPanel(agent, parent?)`) só existe quando o desenvolvedor o chama, não por
+`Options.Debug`; no cliente o pai é o `PlayerGui`, no servidor não há tela e o pai é obrigatório.
+(4) `SmartPath.explain` devolve texto em português (o exemplo do plano está em português) e nunca
+erra: details ausente, incompleto ou de tipo errado e código desconhecido viram frase. (5)
+`MoveTo` e `GetRoute` passam a devolver `details` como terceiro valor (quem lê só `ok, reason` não
+percebe): sem ele o nível 0 não teria como chamar `explain`.
+Motivo: um erro só é útil se dá para agir sobre ele; o desenho mostra onde, o `explain` diz o quê.
+Consequência: `requiredRadius` em `corridor_too_narrow` é o maior raio de agente que CABERIA (o
+nome vem do plano), e `explain` o diz assim ("só comporta um agente de raio até X"). O texto é
+uma tabela de funções em `Diagnostics.luau`, pronta para tradução. O `Scheduler` ainda faz `warn`
+incondicional quando um job lança erro (é bug, não fluxo normal; ver `BACKLOG.md`).
+
+## D-027 — O demo é um projeto Rojo à parte; o baseline é protegido com NavSolid; o gatilho usa grupo de colisão
+Data: 2026-09-20
+Contexto: a Fase 7 pede o place de demonstração: 8 cenários, um NPC de PathfindingService puro à
+esquerda e um da SmartPath à direita, sobre geometria idêntica. Três problemas apareceram no desenho.
+Decisão: (1) O demo mora em `src/demo/` e tem o seu `demo.project.json` (biblioteca + demo, sem os
+testes). Os dois compartilham o `Scheduler` e a `Geometry`, que são singletons; rodar 40 NPCs junto
+com os testes de fase mudaria os resultados dos dois. (2) `Geometry` é global (D-006): ela põe
+`PathfindingModifier` PassThrough em qualquer gatilho invisível do workspace, inclusive na pista
+do lado clássico, o que ajudaria o baseline e invalidaria a comparação. Toda parte da pista
+clássica leva a tag `NavSolid` ("SmartPath, não toque"), que para o PathfindingService não significa
+nada. A geometria continua idêntica; só a tag difere. (3) Um gatilho invisível com `CanCollide`
+verdadeiro também bloqueia o corpo (o Phase 6 mostrou: `stuck`). O `DoorTrigger` do cenário 5
+fica num grupo de colisão que não colide com `Default`: a malha do PathfindingService o vê como
+parede, o corpo o atravessa. É o caso real (gatilho colidível só para `Touched`).
+Motivo: sem (2) e (3) o cenário 5 ou não separaria os dois lados, ou seria impossível para ambos.
+Consequência: [VALIDAR] no Studio se a malha da engine respeita grupos de colisão; se respeitar, o
+lado clássico atravessa o gatilho e o cenário 5 não distingue os dois lados. O cenário 8 roda um
+lado de cada vez (30 s cada, mais 5 s sem NPCs) para que o FPS de um não contamine o do outro.
+Os cenários 3 e 4 começam a ~7 studs do obstáculo: o atalho por salto só enxerga obstáculos a até
+10 studs (`PROBE_DISTANCE` do `Predictor`); ver `BACKLOG.md`.
+
+## D-028 — Personagens nunca são parede: excluídos dos RaycastParams; o corpo de outro NPC não é "invisível colidível"
+Data: 2026-09-20
+Contexto: o cenário 8 do demo (20 NPCs na mesma pista) deu 149 falhas da SmartPath em 256 trechos:
+95 `corridor_too_narrow` e 54 `invisible_collider`. Dois defeitos diferentes, ambos por tratar outro
+personagem como geometria. (1) Os `RaycastParams` da lib só excluíam o próprio personagem, então a
+validação de volume reprovava rotas por causa de um NPC parado (item do BACKLOG desde a Fase 4).
+(2) O `HumanoidRootPart` do R15 é invisível e colidível; o diagnóstico de `stuck` (D-024) o
+apontava como "parte invisível colidível".
+Decisão: `Geometry` passa a guardar os modelos com `Humanoid` (`trackCharacter`, na varredura
+inicial e no `DescendantAdded`) e `buildRaycastParams` os inclui na lista de exclusão; registrar um
+personagem novo sobe a versão, para o `RaycastParams` cacheado de cada `Agent` se refazer.
+`Geometry.isInvisibleCollider` devolve falso para qualquer parte dentro de um modelo com
+`Humanoid`. Além disso, o `corridor_too_narrow` passou a levar `rejectedRoute` (a rota que a
+engine devolveu e o corpo não coube), que o `Debug` desenha em vermelho.
+Motivo: um personagem se move; validar a rota contra a posição dele num instante é errado, e o
+anti-stuck já cuida de quem bloqueia de verdade.
+Consequência: registrar cada personagem invalida o cache de rotas (um evento por NPC criado); num
+jogo com muitos spawns seguidos isso reduz a taxa de acerto do cache, sem afetar a correção. Uma
+parte qualquer que esteja dentro de um modelo com `Humanoid` (uma arma, por exemplo) também
+deixa de ser suspeita de `invisible_collider`.
+
+## D-029 — Os raios do relaxamento partem atrás do waypoint
+Data: 2026-09-20
+Contexto: no cenário 5 do demo a engine devolveu uma rota com um canto exatamente sobre a face de
+uma parede (x = -1.0, face em x = -1). O resgate de D-018 não o empurrou, porque um raio que
+começa numa superfície não a acerta, e a rota foi reprovada com `corridor_too_narrow` e
+`requiredRadius = 0`, embora houvesse espaço de sobra ao redor.
+Decisão: os raios horizontais do `relaxRoute` partem 0.3 stud atrás do waypoint e ganham 0.3 de
+alcance; a distância à parede é medida a partir do waypoint. Um canto encostado ou colado é
+detectado e empurrado (no máximo `RELAX_MAX_SHIFT`, como antes).
+Motivo: a engine tolera raio 2 e leva a rota até a parede; o resgate existe para esse caso.
+Consequência: o resgate continua limitado a 1.5 stud de deslocamento; um canto mais enterrado
+que isso segue reprovado. O suavizador também não cria cantos novos (só liga os da engine), então a
+rota resultante pode ser mais colada nas paredes do que o ideal.
+
+## D-030 — Resgate relaxa os cantos crus antes de suavizar; o agente revalida a rota a cada 1 s
+Data: 2026-09-20
+Contexto: dois achados do demo. (1) Cenário 5: o `rejectedRoute` mostrou que o suavizador ligou um
+canto sobre a face de uma parede diretamente ao destino do outro lado, atravessando a parede: o
+`Spherecast` ignora o que já sobrepõe a origem (D-014), e a âncora estava em cima da parede. A
+rota reprovava, e o relaxamento de D-018/D-029, aplicado à rota já suavizada, movia o canto mas o
+trecho seguinte continuava cortando a parede. (2) Cenário 7: um bloco criado no alto e depois
+solto sobre a rota não disparou `Blocked`, porque `Geometry.PartAdded` só avisa de partes novas,
+e o bloco já estava no mundo (ainda sem bloquear) quando foi criado.
+Decisão: (1) no resgate, `runLadder` relaxa os cantos CRUS da engine e passa pelo suavizador de novo
+(`prepareRoute(relaxRoute(raw))`); se ainda não couber, tenta relaxar a rota já suavizada, como
+antes. Nenhuma âncora do suavizador fica encostada na parede. (2) Em `Following`, com rota vinda do
+solver, o `Agent` marca a rota como suja a cada `ROUTE_RECHECK_INTERVAL` (1 s) e a revalida com a
+mesma varredura de sempre; o custo é uma validação por segundo por agente.
+Motivo: (1) o resgate só serve se a rota que ele devolve não passa por dentro de uma parede.
+(2) partes que se movem (blocos, portas) são o caso normal de obstáculo dinâmico.
+Consequência: (1) o resgate só roda quando a rota não cabe, então rotas que já cabiam não mudam. (2) o
+bloqueio por parte móvel é detectado em até 1 s (mais até 0.25 s do intervalo de `_checkRoute`),
+não na hora; fecha em parte o item do `BACKLOG.md` sobre partes que se movem para dentro da rota.
+
+## D-031 — Reparo de rota: waypoints de desvio inseridos onde o corpo bate
+Data: 2026-09-20
+Contexto: no cenário 8 do demo, 19 a 26 dos ~130 trechos da SmartPath falhavam com
+`corridor_too_narrow`, sempre nas quinas de pilares (o pilar central, por exemplo, nos cantos
+(-7, ±2)). O relatório mostrou `rota` com 2 waypoints: a engine é tolerante e devolve a reta de
+origem a destino passando a ~0.6 stud da quina, sem nenhum canto. O resgate de D-018/D-029/D-030
+só move waypoints que já existem, então não havia o que relaxar.
+Decisão: `repairRoute` é a última tentativa do resgate em `runLadder`. Repete até 8 vezes: mede a
+rota, e onde o corpo bate insere um waypoint de desvio no lado livre da superfície (a normal da
+batida, projetada no plano) a `bodyRadius x 1.25 + 0.3` do ponto de contato, apoiado no chão. Só
+roda quando a rota não coube nem com os relaxamentos, e a validação de volume continua a última
+palavra: a rota reparada só é aceita se a MESMA varredura a aprovar. `routeClear` passou a devolver
+também a normal da batida.
+Motivo: é o mesmo caso que D-018 tratava (a engine leva a rota até a parede), mas sem waypoint
+interior para empurrar.
+Consequência: o desvio é local e pode deixar a rota mais quebrada que o ideal; o suavizador não
+roda de novo depois do reparo. Uma batida em superfície horizontal (normal vertical) interrompe o
+reparo, porque desviar de lado não a resolve. Cobertura: `Phase2` ganhou um cenário com a reta
+roçando a quina de um pilar.

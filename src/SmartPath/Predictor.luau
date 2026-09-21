@@ -10,10 +10,12 @@
 -- de 6 e 7 é invertida em relação à ESPEC: o corredor precisa da altura do apex e do ponto
 -- de decolagem, que só existem depois da balística (ver D-014).
 --
--- Retorna (plano, "ok") ou (nil, motivo). Todo retorno negativo traz o motivo, que vira
--- diagnóstico nas fases seguintes: no_obstacle, not_a_wall, target_too_close, jump_too_weak,
--- too_tall, top_not_found, no_landing, drop_too_high, insufficient_jump, too_deep,
--- air_blocked, ceiling.
+-- Retorna (plano, "ok") ou (nil, motivo, dados?). Todo retorno negativo traz o motivo:
+-- no_obstacle, not_a_wall, target_too_close, jump_too_weak, too_tall, top_not_found, no_landing,
+-- drop_too_high, insufficient_jump, too_deep, air_blocked, ceiling. Os que medem algo trazem
+-- também `dados` (Fase 6): too_tall e insufficient_jump { height, maxJump }, no_landing e
+-- drop_too_high { drop }, todos com `at` (onde está a parede); `atLeast = true` quando o valor é um
+-- mínimo (o raio só prova que há algo ali). O Agent os converte em obstacle_too_tall e no_landing.
 
 local Util = require(script.Parent.Util)
 
@@ -29,6 +31,9 @@ export type Context = {
 	agentHeight: number?,
 	walkSpeed: number?,
 	maxJumpHeight: number?,
+	-- até onde à frente procurar o obstáculo (default PROBE_DISTANCE); o diagnóstico de falha passa
+	-- math.huge para achar o primeiro obstáculo da linha inteira até o destino
+	probeDistance: number?,
 }
 
 export type Plan = {
@@ -95,7 +100,7 @@ local function findTop(
 	return nil
 end
 
-function Predictor.analyze(ctx: Context): (Plan?, string)
+function Predictor.analyze(ctx: Context): (Plan?, string, { [string]: any }?)
 	local root = ctx.root
 	local humanoid = ctx.humanoid
 	local rootPos = root.Position
@@ -114,7 +119,7 @@ function Predictor.analyze(ctx: Context): (Plan?, string)
 		return nil, "target_too_close"
 	end
 	local dir = toTarget.Unit
-	local probeDist = math.min(PROBE_DISTANCE, dist)
+	local probeDist = math.min(ctx.probeDistance or PROBE_DISTANCE, dist)
 
 	local usable = maxJump - HEIGHT_SAFETY_MARGIN
 	if usable <= MIN_OBSTACLE_HEIGHT then
@@ -136,7 +141,8 @@ function Predictor.analyze(ctx: Context): (Plan?, string)
 	local highHit =
 		workspace:Raycast(Vector3.new(rootPos.X, highY, rootPos.Z), dir * (wallHit.Distance + 0.5), ctx.params)
 	if highHit then
-		return nil, "too_tall"
+		-- o raio só diz que há algo naquela altura: a altura real é essa ou maior (atLeast)
+		return nil, "too_tall", { height = highY - feetY, maxJump = maxJump, atLeast = true, at = wallHit.Position }
 	end
 
 	-- 4) topo do obstáculo
@@ -146,7 +152,7 @@ function Predictor.analyze(ctx: Context): (Plan?, string)
 	end
 	local obstacleHeight = topY - feetY
 	if obstacleHeight > usable then
-		return nil, "too_tall"
+		return nil, "too_tall", { height = obstacleHeight, maxJump = maxJump, at = wallHit.Position }
 	end
 
 	-- 5) profundidade e ponto de pouso
@@ -173,10 +179,11 @@ function Predictor.analyze(ctx: Context): (Plan?, string)
 		local p = wallHit.Position + dir * ((depth :: number) + agentRadius + LANDING_MARGIN)
 		local floor = workspace:Raycast(Vector3.new(p.X, topY + 0.5, p.Z), -UP * scanDrop, ctx.params)
 		if not floor then
-			return nil, "no_landing"
+			-- sem chão em todo o alcance da varredura: a queda é essa ou maior (atLeast)
+			return nil, "no_landing", { drop = obstacleHeight + MAX_SAFE_DROP, atLeast = true, at = wallHit.Position }
 		end
 		if topY - floor.Position.Y > MAX_SAFE_DROP then
-			return nil, "drop_too_high"
+			return nil, "drop_too_high", { drop = topY - floor.Position.Y, at = wallHit.Position }
 		end
 		landing = floor.Position
 	end
@@ -188,7 +195,7 @@ function Predictor.analyze(ctx: Context): (Plan?, string)
 	-- apex h acima dela: t = 2*sqrt(2h/g), logo h = g*t²/8.
 	local clearH = obstacleHeight + AIR_CLEARANCE
 	if clearH > maxJump then
-		return nil, "insufficient_jump"
+		return nil, "insufficient_jump", { height = obstacleHeight, maxJump = maxJump, at = wallHit.Position }
 	end
 	local jumpH = clearH + APEX_EXTRA
 	if not isPlatform then

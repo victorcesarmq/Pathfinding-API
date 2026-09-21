@@ -4,7 +4,6 @@
 -- Números mágicos ficam em Config; aqui só fórmulas e leitura de estado do jogo
 -- (Seção 1.3 e 3.3 da ESPEC_NAVEGACAO_ROBLOX.md).
 
-local Debris = game:GetService("Debris")
 local Types = require(script.Parent.Types)
 
 local Util = {}
@@ -151,52 +150,13 @@ function Util.pathLength(waypoints: { Types.Waypoint }, fromPos: Vector3, startI
 	return total
 end
 
--- ===== Debug (regra 10: só sob options.Debug, sempre prefixado) =====
+-- ===== Debug (regra 10: só sob options.Debug, sempre prefixado; o desenho fica em Debug.luau) =====
 
 function Util.debugPrint(enabled: boolean, ...: any)
 	if not enabled then
 		return
 	end
 	print("[SmartPath]", ...)
-end
-
-local debugFolder: Folder? = nil
-function Util.getDebugFolder(): Folder
-	if debugFolder and debugFolder.Parent then
-		return debugFolder
-	end
-	local f = Instance.new("Folder")
-	f.Name = "SmartPathDebug"
-	f.Parent = workspace
-	debugFolder = f
-	return f
-end
-
-function Util.drawPoint(pos: Vector3, color: Color3, size: number?, lifetime: number?)
-	local p = Instance.new("Part")
-	p.Shape = Enum.PartType.Ball
-	p.Size = Vector3.one * (size or 0.6)
-	p.Anchored = true
-	p.CanCollide = false -- nunca poluir a navmesh nem os próprios raycasts da lib
-	p.CanQuery = false
-	p.CanTouch = false
-	p.Material = Enum.Material.Neon
-	p.Color = color
-	p.Position = pos
-	p.Parent = Util.getDebugFolder()
-	Debris:AddItem(p, lifetime or 6)
-end
-
-function Util.drawRoute(waypoints: { Types.Waypoint }, lifetime: number?)
-	for _, wp in ipairs(waypoints) do
-		local color = Color3.fromRGB(80, 200, 255) -- Walk: azul
-		if wp.Action == Enum.PathWaypointAction.Jump then
-			color = Color3.fromRGB(255, 200, 0) -- Jump: amarelo
-		elseif wp.Action == Enum.PathWaypointAction.Custom then
-			color = Color3.fromRGB(255, 0, 200) -- Custom: magenta
-		end
-		Util.drawPoint(wp.Position, color, 0.6, lifetime)
-	end
 end
 
 return Util

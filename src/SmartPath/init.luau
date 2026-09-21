@@ -3,7 +3,8 @@
 -- Fachada pública da SmartPath (Seção 3 do plano de execução, CONGELADA):
 --   nível 0 (MoveTo, MoveToAsync, GetRoute): uma linha, sem tabela de opções;
 --   nível 1 (new): agente persistente;
---   nível 2 (Predictor, Simplifier, Geometry, Scheduler, Errors): peças soltas;
+--   nível 2 (Predictor, Simplifier, Geometry, Scheduler, Errors, Debug): peças soltas;
+--   diagnóstico (Fase 6): explain(reason, details) e Debug (visualização e painel);
 --   Service: camada de compatibilidade que espelha o PathfindingService.
 
 local Types = require(script.Types)
@@ -17,6 +18,8 @@ local Predictor = require(script.Predictor)
 local RouteSolver = require(script.RouteSolver)
 local Agent = require(script.Agent)
 local Compat = require(script.Compat)
+local Diagnostics = require(script.Diagnostics)
+local Debug = require(script.Debug)
 
 local SmartPath = {}
 
@@ -28,6 +31,15 @@ SmartPath.Simplifier = Simplifier
 SmartPath.Geometry = Geometry
 SmartPath.Scheduler = Scheduler
 SmartPath.Errors = Errors
+SmartPath.Debug = Debug
+
+-- ===== Diagnóstico (Fase 6) =====
+
+-- Frase legível para um código de erro e seus details (o que Failed/Await/MoveTo devolvem).
+-- Sempre devolve uma string: código desconhecido ou details incompleto não geram erro.
+function SmartPath.explain(reason: string?, details: { [string]: any }?): string
+	return Diagnostics.explain(reason, details)
+end
 
 -- ===== Camada de compatibilidade (Seção 3.4) =====
 SmartPath.Service = Compat.Service
@@ -78,16 +90,16 @@ local function agentFor(characterLike: Types.CharacterLike, options: Types.Optio
 end
 
 -- Move e só retorna quando terminar (bloqueante). target: Vector3 | BasePart | Model.
--- Retorna (true) ao chegar ou (false, motivo) — motivo é um código de SmartPath.Errors.
+-- Retorna (true) ao chegar ou (false, motivo, details) — motivo é um código de SmartPath.Errors
+-- e details o que SmartPath.explain espera (o terceiro valor não muda quem só lê ok, motivo).
 function SmartPath.MoveTo(
 	humanoid: Types.CharacterLike,
 	target: Types.TargetLike,
 	options: Types.Options?
-): (boolean, string?)
+): (boolean, string?, { [string]: any }?)
 	local agent = agentFor(humanoid, options)
 	agent:MoveTo(target)
-	local ok, reason = agent:Await()
-	return ok, reason
+	return agent:Await()
 end
 
 -- Versão não-bloqueante: devolve o agente já em movimento (use :Await(), os sinais, ou :Destroy()).
@@ -101,15 +113,18 @@ function SmartPath.MoveToAsync(
 	return agent
 end
 
--- Só calcula, não move. Devolve os waypoints melhorados ou (nil, motivo). Bloqueante.
+-- Só calcula, não move. Devolve os waypoints melhorados ou (nil, motivo, details). Bloqueante.
 function SmartPath.GetRoute(
 	humanoid: Types.CharacterLike,
 	target: Types.TargetLike,
 	options: Types.Options?
-): ({ Types.Waypoint }?, string?)
+): ({ Types.Waypoint }?, string?, { [string]: any }?)
 	local resolved = Config.resolve(humanoid, options)
-	local waypoints, reason = RouteSolver.solve(humanoid, target, resolved)
-	return waypoints, reason
+	local waypoints, reason, details = RouteSolver.solve(humanoid, target, resolved)
+	if waypoints then
+		return waypoints, nil, nil
+	end
+	return nil, reason, details
 end
 
 return SmartPath

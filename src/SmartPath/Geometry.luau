@@ -33,6 +33,9 @@ type Entry = {
 
 local ignored: { [BasePart]: Entry } = {}
 local ignoredList: { BasePart } = {}
+-- Modelos com Humanoid (personagens de jogadores e NPCs). Eles se movem sozinhos, então nenhuma
+-- consulta de rota pode tratá-los como parede (D-028): entram em todo RaycastParams como excluídos.
+local characters: { [Model]: boolean } = {}
 local version = 0
 local started = false
 local autoFilterEnabled = true
@@ -150,6 +153,20 @@ local function mark(part: BasePart, reason: ClassifyReason)
 	bump()
 end
 
+local function trackCharacter(humanoid: Humanoid)
+	local model = humanoid.Parent
+	if model and model:IsA("Model") and not characters[model] then
+		characters[model] = true
+		bump() -- o RaycastParams cacheado de um Agent (por versão) passa a excluí-lo
+	end
+end
+
+-- personagem de verdade: parte de um modelo com Humanoid
+local function inCharacter(part: Instance): boolean
+	local model = part:FindFirstAncestorOfClass("Model")
+	return model ~= nil and model:FindFirstChildOfClass("Humanoid") ~= nil
+end
+
 local function refresh(inst: Instance)
 	if not inst:IsA("BasePart") then
 		return
@@ -188,8 +205,14 @@ function Geometry.start()
 	started = true
 	for _, d in ipairs(workspace:GetDescendants()) do
 		refresh(d)
+		if d:IsA("Humanoid") then
+			trackCharacter(d)
+		end
 	end
 	descendantConn = workspace.DescendantAdded:Connect(function(d)
+		if d:IsA("Humanoid") then
+			trackCharacter(d)
+		end
 		-- defer: propriedades (Transparency, CanCollide, Name) costumam ser setadas logo
 		-- após o parent
 		task.defer(function()
@@ -223,6 +246,7 @@ function Geometry.stop()
 	for _, part in ipairs(table.clone(ignoredList)) do
 		unmark(part)
 	end
+	table.clear(characters)
 end
 
 function Geometry.isRunning(): boolean
@@ -268,10 +292,51 @@ function Geometry.getIgnoredCount(): number
 	return #ignoredList
 end
 
+-- Instâncias que a própria SmartPath cria e que nunca podem contar como mapa (a pasta de
+-- debug). Entram em todo RaycastParams; as que saíram do jogo são descartadas aqui.
+local libraryExclusions: { Instance } = {}
+
+function Geometry.addExclusion(inst: Instance)
+	if table.find(libraryExclusions, inst) then
+		return
+	end
+	table.insert(libraryExclusions, inst)
+	bump() -- params já construídos (o do Agent é cacheado por versão) passam a incluí-la
+end
+
+-- Parte invisível e colidível que o desenvolvedor não declarou sólida: suspeita nº 1 quando algo
+-- bloqueia sem motivo visível. NavSolid é intenção explícita (limite de mapa), então nunca é
+-- suspeita. Não olha se a lib a filtrou (`ignored`): as consultas do solver já excluem as
+-- filtradas, e o diagnóstico de "travou" quer justamente as que o corpo bate e a malha não vê.
+function Geometry.isInvisibleCollider(part: Instance): boolean
+	return part:IsA("BasePart")
+		and part.CanCollide
+		and part.Transparency >= INVISIBLE_THRESHOLD
+		and not hasTagInAncestry(part, SOLID_TAG)
+		-- o HumanoidRootPart do R15 é invisível e colidível: é o corpo de outro personagem, não um
+		-- gatilho esquecido no mapa
+		and not inCharacter(part)
+end
+
 -- RaycastParams para os raycasts da própria SmartPath. `extra` = instâncias adicionais a
--- excluir (tipicamente o personagem do próprio agente e a pasta de debug).
+-- excluir (tipicamente o personagem do próprio agente).
 function Geometry.buildRaycastParams(extra: { Instance }?): RaycastParams
 	local list = table.clone(ignoredList) :: { Instance }
+	for model in pairs(characters) do
+		if model.Parent then
+			table.insert(list, model)
+		else
+			characters[model] = nil
+		end
+	end
+	for i = #libraryExclusions, 1, -1 do
+		local inst = libraryExclusions[i]
+		if inst.Parent then
+			table.insert(list, inst)
+		else
+			table.remove(libraryExclusions, i)
+		end
+	end
 	if extra then
 		for _, inst in ipairs(extra) do
 			table.insert(list, inst)
@@ -293,9 +358,8 @@ function Geometry.audit(): { BasePart }
 		if
 			d:IsA("BasePart")
 			and d.CanCollide
-			and d.Transparency >= INVISIBLE_THRESHOLD
 			and not ignored[d]
-			and not hasTagInAncestry(d, SOLID_TAG)
+			and Geometry.isInvisibleCollider(d)
 		then
 			table.insert(suspects, d)
 		end

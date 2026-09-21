@@ -84,3 +84,47 @@ Formato: [Keep a Changelog](https://keepachangelog.com/). Versionamento semânti
   precisa de posições.
 - `SmartPathTests.Phase5()`: 8 cenários.
 - D-022 e D-023 em `DECISIONS.md`.
+
+### Added — Fase 6 (diagnóstico e debug visual)
+- Os 10 códigos de erro são emitidos, com `details`: `obstacle_too_tall {height, maxJump}`,
+  `no_landing {drop}`, `invisible_collider {instance}` e `timeout {elapsed}` passam a existir (ver
+  D-024 e D-025). `stuck` vira `invisible_collider` quando o corpo bate numa parte invisível que
+  a malha não vê.
+- `SmartPath.explain(reason, details)`: frase legível para cada código; nunca lança erro.
+- `SmartPath.Debug`: waypoints por ação (andar, salto, queda, link), decolagem, pouso, obstáculo,
+  disco do raio efetivo, marca do ponto de falha e painel opcional (`showPanel`) com estado, rota,
+  raio, tempo do último cálculo, fila do `Scheduler` e último erro. Partes de debug sem colisão,
+  sem consulta e fora dos `RaycastParams`; `Debug = false` não cria instância nem imprime.
+- `MoveTo` e `GetRoute` devolvem `details` como terceiro valor.
+- `Predictor.analyze` devolve um terceiro valor com as medidas da falha e aceita `probeDistance`.
+- `Geometry.isInvisibleCollider`, `Geometry.addExclusion`; `Diagnostics.luau`, `Debug.luau`.
+- Removidos `Util.drawPoint`, `Util.drawRoute` e `Util.getDebugFolder` (agora em `Debug`).
+- `SmartPathTests.Phase6()`: um cenário por código de erro, `explain`, Debug desligado, Debug
+  ligado, marca de falha e painel.
+- D-024 a D-026 em `DECISIONS.md`.
+
+### Added — Fase 7 (place de demonstração)
+- `demo.project.json` e `src/demo/`: 8 cenários, cada um com o NPC de PathfindingService puro à
+  esquerda (`Classic.luau`, o exemplo da documentação da Roblox) e o da SmartPath à direita, sobre
+  geometria idêntica. Reiniciar refaz as duas pistas do zero.
+- HUD (`HUD.client.luau`): FPS do cliente e do servidor, fila do `Scheduler`, botões Reiniciar/Ver
+  por cenário, contadores de sucesso e falha de cada lado, "Rodar todos", "Zerar contadores".
+- `Runner.runReport()` (atributo `Command` da pasta `SmartPathDemo`): roda os 8 cenários em sequência e imprime o resultado
+  dos dois lados. `Runner.checkCleanRestart(id)`: confere que reiniciar não deixa resíduo.
+- Cenário 6 verifica explicitamente que a SmartPath respeita o limite `NavSolid` (nenhum
+  `PathfindingModifier` na parede, o NPC não a atravessa, motivo de recusa limpo).
+- D-027 em `DECISIONS.md`.
+- Fase 7, correções na biblioteca achadas pelo demo (D-028): `Geometry` exclui personagens dos
+  `RaycastParams`; o corpo de outro NPC deixa de ser `invisible_collider`; `corridor_too_narrow`
+  traz `rejectedRoute` e o `Debug` a desenha em vermelho.
+- `Runner.diagnose(id)` (comando `diagnose:N`): rotas da engine e da SmartPath de um cenário, sem
+  mover ninguém, com sondas de conectividade da malha.
+- `relaxRoute` detecta cantos exatamente sobre a face da parede (raios partem 0.3 stud atrás do
+  waypoint, D-029); corrige o `corridor_too_narrow` com `requiredRadius = 0` do cenário 5 do demo.
+- Resgate de rota relaxa os cantos crus da engine antes de suavizar (D-030): corrige o
+  `corridor_too_narrow` do cenário 5 do demo.
+- O `Agent` revalida a rota a cada 1 s enquanto segue (D-030): detecta blocos que caem e portas que
+  fecham sobre a rota, que não disparam `Geometry.PartAdded`.
+- Reparo de rota (D-031): quando nem o relaxamento resolve, `RouteSolver` insere waypoints de desvio
+  onde o corpo bate; corrige rotas retas que roçam quinas de pilares (cenário 8 do demo).
+  `Phase2` ganhou o teste "quina de pilar".

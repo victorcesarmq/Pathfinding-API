@@ -10,6 +10,8 @@
 --               é a causa nº 1 de "cair antes do obstáculo" (o Humanoid perde o momento).
 --
 -- Nunca usa Humanoid:MoveTo (timeout de 8s): só Humanoid:Move, todo frame.
+-- Fase 6: toda falha traz código + details (ver Diagnostics.explain); o Agent produz stuck,
+-- timeout, obstacle_too_tall, no_landing e invisible_collider (as causas de "travou").
 -- O passo roda em PreSimulation, e não em Heartbeat: o ControlModule do jogador chama Move em
 -- RenderStepped, que vem ANTES da física; um Move dado só no Heartbeat (depois da física)
 -- seria sobrescrito por ele no frame seguinte [VALIDAR no cliente].
@@ -26,6 +28,8 @@ local Geometry = require(script.Parent.Geometry)
 local RouteSolver = require(script.Parent.RouteSolver)
 local Predictor = require(script.Parent.Predictor)
 local JumpExecutor = require(script.Parent.JumpExecutor)
+local Diagnostics = require(script.Parent.Diagnostics)
+local Debug = require(script.Parent.Debug)
 
 local Agent = {}
 Agent.__index = Agent
@@ -45,6 +49,9 @@ local MIN_REPLAN_INTERVAL = 0.5
 -- inseridas em runtime. Uma parte nova só marca a rota como "suja"; a revalidação roda no
 -- máximo a cada ROUTE_CHECK_INTERVAL, seja quantas partes surjam (ex.: um personagem nascendo).
 local ROUTE_CHECK_INTERVAL = 0.25
+-- Uma parte que já estava no mundo e SE MOVE para dentro da rota (bloco que cai, porta) não dispara
+-- Geometry.PartAdded. Enquanto segue, o agente revalida a rota a cada ROUTE_RECHECK_INTERVAL (D-030).
+local ROUTE_RECHECK_INTERVAL = 1
 -- Depois de um bloqueio a malha da engine demora a incluir o obstáculo (medido: mais de 10s), e
 -- nesse intervalo o replan não acha rota. Em vez de falhar, o agente espera e tenta de novo.
 local BLOCKED_RETRY_WINDOW = 30
@@ -72,6 +79,27 @@ local START_INDEX_LOOKAHEAD = 5
 local JUMP_LINK_LABEL = "JumpLink" -- Label de PathfindingLink tratado como salto (v2)
 local DEBUG_LIFETIME = 6
 local LOAD_TIMEOUT = 5 -- espera por Humanoid/HumanoidRootPart de um personagem ainda carregando
+-- Diagnóstico de travamento (Fase 6): ao esgotar o anti-stuck, procura à frente uma parte
+-- invisível colidível. Parte de um pouco atrás para que uma parede encostada no corpo não fique
+-- na origem do Spherecast (que ignora o que sobrepõe a origem, D-014).
+local STUCK_PROBE_BACK = 1.5
+local STUCK_PROBE_AHEAD = 3
+local STUCK_PROBE_KNEE_HEIGHT = 1
+local STUCK_PROBE_KNEE_RADIUS = 0.5
+-- códigos de falha que o Agent produz (o solver imprime e desenha os seus)
+local DRAWN_BY_AGENT: { [string]: boolean } = {
+	[Errors.Stuck] = true,
+	[Errors.ObstacleTooTall] = true,
+	[Errors.NoLanding] = true,
+	[Errors.InvisibleCollider] = true,
+	[Errors.Timeout] = true,
+}
+
+-- Tempo máximo de uma movimentação (código `timeout`). Não é opção pública (Seção 3.5 congelada):
+-- orçamento = BASE + FACTOR x (maior rota adotada) / WalkSpeed. BASE cobre a janela de espera
+-- por bloqueio (30 s) com folga; FACTOR tolera um agente bem mais lento que o ideal. Exposto em
+-- Agent._tuning só para os testes encurtarem.
+Agent._tuning = { TimeoutBase = 45, TimeoutFactor = 4 }
 
 type Session = {
 	done: boolean,
@@ -131,6 +159,11 @@ type AgentData = {
 	_blockedRetryUntil: number,
 	_plannedGoal: Vector3?,
 	_lastTargetCheck: number,
+	_sessionStart: number,
+	_maxRouteLen: number,
+	_lastCalcTime: number?,
+	_lastDetails: { [string]: any }?,
+	_lastFailure: { reason: string, details: { [string]: any } }?,
 }
 
 export type Agent = typeof(setmetatable({} :: AgentData, Agent))
@@ -226,6 +259,11 @@ function Agent.new(characterOrHumanoid: Types.CharacterLike, options: Types.Opti
 			_blockedRetryUntil = 0,
 			_plannedGoal = nil,
 			_lastTargetCheck = 0,
+			_sessionStart = 0,
+			_maxRouteLen = 0,
+			_lastCalcTime = nil,
+			_lastDetails = nil,
+			_lastFailure = nil,
 		}, Agent) :: any
 	) :: Agent
 
@@ -294,6 +332,8 @@ function Agent.MoveTo(self: Agent, target: Types.TargetLike)
 	self._routeDirty = false
 	self._blockedRetryUntil = 0
 	self._plannedGoal = nil
+	self._lastFailure = nil
+	self:_restartBudget()
 	self:_watchPath(nil)
 
 	if self.Humanoid.Health <= 0 or not self.Root.Parent then
@@ -338,6 +378,7 @@ function Agent.SetSuspended(self: Agent, suspended: boolean)
 		local paused = os.clock() - self._suspendedAt
 		self._directStart += paused
 		self._airStart += paused
+		self._sessionStart += paused
 		self._stuck.lastPos = nil
 		if self._route and self._state == "Following" then
 			self._index = self:_selectStartIndex(self._route, self._index)
@@ -413,7 +454,14 @@ function Agent._halt(self: Agent)
 end
 
 function Agent._fail(self: Agent, reason: string, details: { [string]: any }?)
-	local d = details or {}
+	local d: { [string]: any } = details or {}
+	self._lastFailure = { reason = reason, details = d }
+	-- invisible_collider vindo do solver já foi impresso e desenhado lá; só o que nasce de stuck é daqui
+	local fromSolver = reason == Errors.InvisibleCollider and d.underlying ~= Errors.Stuck
+	if self.Options.Debug and DRAWN_BY_AGENT[reason] and not fromSolver then
+		Util.debugPrint(true, "falha:", reason, Diagnostics.explain(reason, d))
+		Debug.failure(reason, d, DEBUG_LIFETIME)
+	end
 	self:_halt()
 	self._state = "Failed"
 	finishSession(self, false, reason, d)
@@ -430,6 +478,7 @@ function Agent._arrive(self: Agent)
 			self._goal = pos
 			self._route = nil
 			self._forceAdopt = true
+			self:_restartBudget()
 			if self.Humanoid.Parent then
 				self.Humanoid:Move(Vector3.zero, false) -- Move é persistente
 			end
@@ -532,6 +581,22 @@ function Agent._getParams(self: Agent): RaycastParams
 	return params :: RaycastParams
 end
 
+-- Orçamento de tempo da movimentação atual (código `timeout`). Recomeça quando o alvo se move.
+function Agent._restartBudget(self: Agent)
+	self._sessionStart = os.clock()
+	self._maxRouteLen = 0
+end
+
+function Agent._checkTimeout(self: Agent)
+	local userSpeed = self._userOptions.Agent and self._userOptions.Agent.WalkSpeed
+	local speed = math.max(userSpeed or self.Humanoid.WalkSpeed, 1)
+	local budget = Agent._tuning.TimeoutBase + Agent._tuning.TimeoutFactor * self._maxRouteLen / speed
+	local elapsed = os.clock() - self._sessionStart
+	if elapsed > budget then
+		self:_fail(Errors.Timeout, { elapsed = math.floor(elapsed * 10 + 0.5) / 10 })
+	end
+end
+
 function Agent._requestPlan(self: Agent, force: boolean)
 	if self._destroyed then
 		return
@@ -563,6 +628,7 @@ function Agent._checkTarget(self: Agent)
 	if pos and planned and (pos - planned).Magnitude > TARGET_MOVE_THRESHOLD then
 		self._goal = pos
 		self._forceAdopt = true -- o destino mudou: a histerese não pode manter a rota velha
+		self:_restartBudget() -- perseguir um alvo que se move não estoura o tempo máximo
 		self:_requestPlan(true)
 	end
 end
@@ -582,7 +648,9 @@ function Agent._plan(self: Agent)
 	end
 	self._plannedGoal = self._goal
 
+	local t0 = os.clock()
 	local wps, reason, details = RouteSolver.solve(self.Humanoid, target, self.Options)
+	self._lastCalcTime = os.clock() - t0
 
 	if self._destroyed then
 		return
@@ -629,6 +697,8 @@ function Agent._adoptRoute(self: Agent, wps: { Types.Waypoint }, details: { [str
 	end
 	self._forceAdopt = false
 	self._route = wps
+	self._lastDetails = details
+	self._maxRouteLen = math.max(self._maxRouteLen, newLen)
 	self._routeFromSolver = true
 	self._blockedRetryUntil = 0
 	self._index = self:_selectStartIndex(wps, 1)
@@ -639,13 +709,21 @@ function Agent._adoptRoute(self: Agent, wps: { Types.Waypoint }, details: { [str
 	self:_watchPath(details.path)
 
 	if self.Options.Debug then
-		Util.drawRoute(wps, DEBUG_LIFETIME)
+		Debug.route(wps, DEBUG_LIFETIME)
+		local used, full = details.radius, details.agentRadius
+		if typeof(used) == "number" and typeof(full) == "number" and wps[1] then
+			Debug.radius(wps[1].Position, used, full, DEBUG_LIFETIME)
+		end
 	end
 
 	self:_considerDirectJump(newLen, gen)
 end
 
-function Agent._analyzeToward(self: Agent, targetPos: Vector3): (Predictor.Plan?, string)
+function Agent._analyzeToward(
+	self: Agent,
+	targetPos: Vector3,
+	probeDistance: number?
+): (Predictor.Plan?, string, { [string]: any }?)
 	local userMax = self._userOptions.Jump and self._userOptions.Jump.MaxHeight
 	local userSpeed = self._userOptions.Agent and self._userOptions.Agent.WalkSpeed
 	return Predictor.analyze({
@@ -658,6 +736,7 @@ function Agent._analyzeToward(self: Agent, targetPos: Vector3): (Predictor.Plan?
 		-- vivos: o jogo pode mudar WalkSpeed/JumpHeight depois que o agente foi criado
 		walkSpeed = userSpeed or self.Humanoid.WalkSpeed,
 		maxJumpHeight = userMax,
+		probeDistance = probeDistance,
 	})
 end
 
@@ -699,10 +778,6 @@ function Agent._considerDirectJump(self: Agent, pathLen: number, gen: number)
 	self._index = 1
 	self._state = "DirectJump"
 	self._directStart = os.clock()
-	if self.Options.Debug then
-		Util.drawPoint(plan.wallPoint, Color3.fromRGB(255, 60, 60), 0.8, DEBUG_LIFETIME)
-		Util.drawPoint(plan.landingPoint, Color3.fromRGB(60, 255, 60), 0.8, DEBUG_LIFETIME)
-	end
 end
 
 -- Sem rota: o destino pode estar atrás de um obstáculo que a malha não sabe saltar (a engine
@@ -715,7 +790,11 @@ function Agent._handleNoRoute(self: Agent, reason: string, details: { [string]: 
 			self._jumpPlan = plan
 			local goalWp: Types.Waypoint = { Position = goal, Action = WALK, Label = "", SmartAction = "Walk" }
 			table.freeze(goalWp)
-			self._route = { goalWp }
+			local route = { goalWp }
+			self._route = route
+			if self.Options.Debug then
+				Debug.route(route, DEBUG_LIFETIME)
+			end
 			self._routeFromSolver = false
 			self._index = 1
 			self._state = "DirectJump"
@@ -732,6 +811,16 @@ function Agent._handleNoRoute(self: Agent, reason: string, details: { [string]: 
 			end
 		end)
 		return
+	end
+	-- Diagnóstico (Fase 6): sem rota e sem salto possível, o primeiro obstáculo da linha reta até o
+	-- destino pode ser a explicação. Olha a linha inteira, não só os 10 studs da sonda normal.
+	if goal and reason == Errors.NoPath and self.Options.Jump.Enabled then
+		local _, why, info = self:_analyzeToward(goal, math.huge)
+		local code, refined = Diagnostics.refineJumpFailure(reason, details, why, info)
+		if code and refined then
+			self:_fail(code, refined)
+			return
+		end
 	end
 	self:_fail(reason, details)
 end
@@ -763,6 +852,14 @@ function Agent._step(self: Agent)
 	if self._destroyed then
 		return
 	end
+	if
+		not self._routeDirty
+		and self._state == "Following"
+		and self._routeFromSolver
+		and os.clock() - self._lastRouteCheck >= ROUTE_RECHECK_INTERVAL
+	then
+		self._routeDirty = true
+	end
 	-- antes do return de suspenso: um agente pausado também precisa saber que a rota foi bloqueada
 	if self._routeDirty then
 		self:_checkRoute()
@@ -772,6 +869,10 @@ function Agent._step(self: Agent)
 	end
 	local st = self._state
 	if st == "Idle" or st == "Failed" then
+		return
+	end
+	self:_checkTimeout()
+	if self._state == "Failed" then
 		return
 	end
 	self:_checkTarget()
@@ -909,6 +1010,9 @@ function Agent._executeJump(
 	if not ok then
 		return false
 	end
+	if self.Options.Debug then
+		Debug.jump((plan or { landingPoint = landing, direction = dir }) :: any, DEBUG_LIFETIME)
+	end
 	self._lastJump = os.clock()
 	self._airTarget = landing
 	self._airDir = dir
@@ -980,8 +1084,62 @@ function Agent._checkStuck(self: Agent)
 		self._forceAdopt = true
 		self:_requestPlan(true)
 	else
-		self:_fail(Errors.Stuck, { position = pos, strikes = s.strikes })
+		local culprit, at = self:_findInvisibleAhead()
+		if culprit then
+			self:_fail(Errors.InvisibleCollider, {
+				instance = culprit,
+				position = at,
+				underlying = Errors.Stuck,
+				strikes = s.strikes,
+			})
+		else
+			self:_fail(Errors.Stuck, { position = pos, strikes = s.strikes })
+		end
 	end
+end
+
+-- O que travou o agente pode ser uma parte invisível colidível que a malha não vê (marcada
+-- NavIgnore, ou filtrada pela lib por parecer um gatilho) mas o corpo bate. Por isso o
+-- Spherecast NÃO usa o filtro da lib: só exclui o próprio personagem. Devolve (parte, ponto).
+function Agent._findInvisibleAhead(self: Agent): (BasePart?, Vector3?)
+	local route = self._route
+	local wp = route and route[self._index]
+	if not wp then
+		return nil, nil
+	end
+	local pos = self.Root.Position
+	local flat = Util.flat(wp.Position - pos)
+	if flat.Magnitude < 1e-3 then
+		return nil, nil
+	end
+	local dir = flat.Unit
+	local exclude: { Instance } = { self.Character or self.Root }
+	local dbg = Debug.peekFolder()
+	if dbg then
+		table.insert(exclude, dbg)
+	end
+	local params = RaycastParams.new()
+	params.FilterType = Enum.RaycastFilterType.Exclude
+	params.FilterDescendantsInstances = exclude
+	params.RespectCanCollide = true
+
+	local feetY = Util.getFeetY(self.Humanoid, self.Root)
+	local samples: { { center: Vector3, radius: number } } = {
+		{ center = pos, radius = Util.getBodyRadius(self.Options.Agent.Radius) },
+		{ center = Vector3.new(pos.X, feetY + STUCK_PROBE_KNEE_HEIGHT, pos.Z), radius = STUCK_PROBE_KNEE_RADIUS },
+	}
+	for _, sample in ipairs(samples) do
+		local culprit, at = Diagnostics.findInvisibleAlong(
+			params,
+			sample.center - dir * STUCK_PROBE_BACK,
+			sample.center + dir * STUCK_PROBE_AHEAD,
+			sample.radius
+		)
+		if culprit then
+			return culprit, at
+		end
+	end
+	return nil, nil
 end
 
 return Agent

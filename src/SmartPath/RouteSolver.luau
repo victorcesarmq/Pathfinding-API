@@ -13,6 +13,8 @@
 --   6. se tudo falhar, devolve o erro diagnóstico mais específico possível.
 --
 -- Todo ComputeAsync passa pelo Scheduler. `solve` DÁ YIELD (é bloqueante, regra 6).
+-- Toda falha sai por `fail` (Fase 6): se a causa é uma parte invisível colidível, o código vira
+-- invisible_collider.
 
 local PathfindingService = game:GetService("PathfindingService")
 
@@ -23,6 +25,8 @@ local Geometry = require(script.Parent.Geometry)
 local Scheduler = require(script.Parent.Scheduler)
 local RouteCache = require(script.Parent.RouteCache)
 local Simplifier = require(script.Parent.Simplifier)
+local Diagnostics = require(script.Parent.Diagnostics)
+local Debug = require(script.Parent.Debug)
 
 local RouteSolver = {}
 
@@ -77,6 +81,17 @@ local RELAX_ITERATIONS = 4
 local RELAX_STEP = 0.8 -- fração do empurrão aplicada por iteração
 local RELAX_MAX_SHIFT = 1.5 -- quanto um waypoint pode se afastar do original
 local RELAX_CLEARANCE_FACTOR = 1.25 -- folga alvo = raio do corpo x este fator
+-- Os raios do relaxamento partem um pouco ATRÁS do waypoint: a engine põe cantos exatamente sobre a
+-- face da parede (medido no cenário 5 do demo, x = -1.0 numa parede com face em x = -1), e um raio
+-- que começa numa superfície não a acerta, então o waypoint nunca era empurrado.
+local RELAX_RAY_BACK = 0.3
+-- Reparo (D-031): quantos waypoints de desvio se inserem, no máximo, e a folga extra além da do corpo.
+local REPAIR_MAX_INSERTIONS = 8
+local REPAIR_MARGIN = 0.3
+
+-- Diagnóstico de parte invisível colidível (Fase 6, D-024): raio da busca em volta do ponto de
+-- estrangulamento de um corredor estreito.
+local INVISIBLE_PROBE_RADIUS = 0.5
 
 -- Cache compartilhado entre chamadas (D-008). Agentes podem passar o seu próprio.
 local sharedCache = RouteCache.new()
@@ -102,6 +117,7 @@ type LadderResult = {
 	path: Path?,
 	narrowFit: number?,
 	narrowAt: Vector3?,
+	narrowRoute: { Types.Waypoint }?,
 	finishBlocked: boolean,
 }
 
@@ -308,8 +324,12 @@ local function groundedPoint(p: Vector3, ctx: Context): Vector3
 	return p
 end
 
--- (livre?, onde bateu). O ponto de batida vira `blockedAt` no erro, para diagnóstico.
-local function routeClear(waypoints: { Types.Waypoint }, radius: number, ctx: Context): (boolean, Vector3?, number?)
+-- (livre?, onde bateu, segmento, normal da superfície). O ponto de batida vira `blockedAt` no erro.
+local function routeClear(
+	waypoints: { Types.Waypoint },
+	radius: number,
+	ctx: Context
+): (boolean, Vector3?, number?, Vector3?)
 	for i = 1, #waypoints - 1 do
 		local a, b = waypoints[i], waypoints[i + 1]
 		-- O waypoint Jump é o DESTINO do salto (D-019): o segmento que chega nele é o voo por
@@ -332,7 +352,7 @@ local function routeClear(waypoints: { Types.Waypoint }, radius: number, ctx: Co
 					if d.Magnitude > 0.01 then
 						local hit = workspace:Spherecast(prev + UP * ctx.simplifyCtx.probeHeight, radius, d, ctx.params)
 						if hit then
-							return false, hit.Position, i
+							return false, hit.Position, i, hit.Normal
 						end
 					end
 					prev = nextPos
@@ -379,9 +399,13 @@ local function relaxRoute(route: { Types.Waypoint }, ctx: Context): { Types.Wayp
 				for k = 0, RELAX_DIRECTIONS - 1 do
 					local angle = (k / RELAX_DIRECTIONS) * 2 * math.pi
 					local dir = Vector3.new(math.cos(angle), 0, math.sin(angle))
-					local hit = workspace:Raycast(pos + UP * sctx.probeHeight, dir * clearance, ctx.params)
+					local hit = workspace:Raycast(
+						pos + UP * sctx.probeHeight - dir * RELAX_RAY_BACK,
+						dir * (clearance + RELAX_RAY_BACK),
+						ctx.params
+					)
 					if hit then
-						push -= dir * (clearance - hit.Distance)
+						push -= dir * (clearance - (hit.Distance - RELAX_RAY_BACK))
 					end
 				end
 				if push.Magnitude < 0.01 then
@@ -416,6 +440,32 @@ local function relaxRoute(route: { Types.Waypoint }, ctx: Context): { Types.Wayp
 	return table.freeze(wps)
 end
 
+-- Reparo (D-031): a engine é tolerante e devolve a reta que passa a 0.6 stud da quina de um pilar
+-- (medido no cenário 8 do demo). A rota tem 2 waypoints, então não há o que relaxar. Aqui, a cada
+-- batida do corpo, entra um waypoint de desvio no lado livre da superfície (a normal da batida),
+-- a uma folga do corpo, e a rota é medida de novo. Só roda quando a rota não cabe.
+local function repairRoute(route: { Types.Waypoint }, ctx: Context): { Types.Waypoint }
+	local wps = table.clone(route)
+	local clearance = ctx.bodyRadius * RELAX_CLEARANCE_FACTOR + REPAIR_MARGIN
+	for _ = 1, REPAIR_MAX_INSERTIONS do
+		local clear, at, segment, normal = routeClear(wps, ctx.bodyRadius, ctx)
+		if clear or not at or not segment or not normal then
+			break
+		end
+		local away = Util.flat(normal)
+		if away.Magnitude < 0.05 then
+			break -- batida em superfície horizontal: desviar de lado não resolve
+		end
+		local detour = groundedPoint(at + away.Unit * clearance, ctx)
+		table.insert(
+			wps,
+			segment + 1, -- o segmento i vai de wps[i] a wps[i + 1]
+			table.freeze({ Position = detour, Action = WALK, Label = "", SmartAction = "Walk" } :: Types.Waypoint)
+		)
+	end
+	return table.freeze(wps)
+end
+
 -- ===== Escada =====
 
 -- Origem de volta ao chão + suavização, e só então a rota é validada (D-012). A rota crua da
@@ -443,7 +493,7 @@ end
 
 local function runLadder(ctx: Context, canJump: boolean, goal: Vector3): LadderResult
 	local result: LadderResult =
-		{ route = nil, radius = nil, path = nil, narrowFit = nil, narrowAt = nil, finishBlocked = false }
+		{ route = nil, radius = nil, path = nil, narrowFit = nil, narrowAt = nil, narrowRoute = nil, finishBlocked = false }
 	for _, radius in ipairs(ctx.ladder) do
 		if not table.find(ctx.tried, radius) then
 			table.insert(ctx.tried, radius)
@@ -456,9 +506,28 @@ local function runLadder(ctx: Context, canJump: boolean, goal: Vector3): LadderR
 			local route = prepareRoute(ctx, raw)
 			local fits, maxFit, blockedAt = measureFit(route, ctx)
 			if not fits then
-				-- rescue (D-018): waypoints encostados na parede reprovam rotas que caberiam
-				local relaxed = relaxRoute(route, ctx)
+				-- rescue (D-018, D-030): waypoints encostados na parede reprovam rotas que caberiam.
+				-- Primeiro relaxa os cantos CRUS da engine e suaviza de novo: o suavizador aceita
+				-- atalhos a partir de um canto sobre a parede (o Spherecast ignora o que sobrepõe a
+				-- origem), e um atalho assim atravessa a parede e não tem conserto depois.
+				local relaxed = prepareRoute(ctx, relaxRoute(raw, ctx))
 				local relaxedFits, relaxedFit, relaxedAt = measureFit(relaxed, ctx)
+				if not relaxedFits then
+					-- segunda tentativa: relaxar a rota já suavizada
+					local second = relaxRoute(route, ctx)
+					local secondFits, secondFit, secondAt = measureFit(second, ctx)
+					if secondFits or secondFit > relaxedFit then
+						relaxed, relaxedFits, relaxedFit, relaxedAt = second, secondFits, secondFit, secondAt
+					end
+				end
+				if not relaxedFits then
+					-- última tentativa: inserir waypoints de desvio onde o corpo bate (D-031)
+					local repaired = repairRoute(route, ctx)
+					local repairedFits, repairedFit, repairedAt = measureFit(repaired, ctx)
+					if repairedFits or repairedFit > relaxedFit then
+						relaxed, relaxedFits, relaxedFit, relaxedAt = repaired, repairedFits, repairedFit, repairedAt
+					end
+				end
 				if relaxedFits then
 					route, fits = relaxed, true
 				elseif relaxedFit > maxFit then
@@ -472,7 +541,7 @@ local function runLadder(ctx: Context, canJump: boolean, goal: Vector3): LadderR
 			-- a engine achou rota, mas o corpo não cabe: registra e tenta o próximo degrau
 			-- (um raio diferente pode achar outro caminho)
 			if result.narrowFit == nil or maxFit > result.narrowFit then
-				result.narrowFit, result.narrowAt = maxFit, blockedAt
+				result.narrowFit, result.narrowAt, result.narrowRoute = maxFit, blockedAt, route
 			end
 		elseif status == Enum.PathStatus.FailFinishNotEmpty then
 			result.finishBlocked = true
@@ -540,6 +609,49 @@ function RouteSolver.isRouteClearAt(
 	return checkRoute(Geometry.buildRaycastParams(extra), route, options, fromIndex or 1)
 end
 
+-- Fase 6 (D-024): toda falha passa por aqui antes de sair do solver. Se a causa é uma parte
+-- invisível colidível que a lib não filtrou, o código vira invisible_collider (com a parte em
+-- details.instance) e o código original vai em details.underlying. Com Debug ligado, marca o ponto.
+local function fail(
+	ctx: Context,
+	code: string,
+	details: { [string]: any },
+	goalRaw: Vector3,
+	goal: Vector3?
+): (nil, string, { [string]: any })
+	local culprit: BasePart? = nil
+	local at: Vector3? = nil
+	if code == Errors.CorridorTooNarrow then
+		local blockedAt = details.blockedAt
+		if typeof(blockedAt) == "Vector3" then
+			culprit = Diagnostics.findInvisibleAt(blockedAt, INVISIBLE_PROBE_RADIUS, ctx.overlapParams)
+			at = blockedAt
+		end
+	elseif code == Errors.GoalUnreachable and not goal then
+		-- destino dentro de uma parede: era invisível?
+		local inside = goalRaw + UP * GOAL_INSIDE_PROBE_HEIGHT
+		at = inside
+		culprit = Diagnostics.findInvisibleAt(inside, GOAL_INSIDE_PROBE_RADIUS, ctx.overlapParams)
+	elseif code == Errors.NoPath or code == Errors.GoalUnreachable then
+		local lift = UP * STAND_CENTER_HEIGHT
+		local target = goal or goalRaw
+		culprit, at =
+			Diagnostics.findInvisibleAlong(ctx.params, ctx.startGround + lift, target + lift, ctx.bodyRadius)
+	end
+	if culprit then
+		details = table.clone(details)
+		details.underlying = code
+		details.instance = culprit
+		details.position = at
+		code = Errors.InvisibleCollider
+	end
+	if ctx.options.Debug then
+		Util.debugPrint(true, "sem rota:", code, Diagnostics.explain(code, details))
+		Debug.failure(code, details)
+	end
+	return nil, code, details
+end
+
 -- Núcleo do solver: tudo o que só precisa de posições (origem no chão, destino, filtro de
 -- raycast). `solve` (com personagem) e `solvePositions` (só Vector3, para a camada de
 -- compatibilidade) preparam esses três e chamam esta função.
@@ -572,7 +684,7 @@ local function solveFrom(
 
 	local goal, nearestValid = normalizeGoal(goalRaw, ctx)
 	if not goal then
-		return nil, Errors.GoalUnreachable, { nearestValid = nearestValid, requestedGoal = goalRaw }
+		return fail(ctx, Errors.GoalUnreachable, { nearestValid = nearestValid, requestedGoal = goalRaw }, goalRaw, nil)
 	end
 
 	local rc = cache or sharedCache
@@ -628,25 +740,22 @@ local function solveFrom(
 	local route = result.route
 	if not route then
 		if result.narrowFit ~= nil then
-			return nil,
-				Errors.CorridorTooNarrow,
-				{
-					requiredRadius = round2(result.narrowFit / Util.BODY_RADIUS_RATIO),
-					agentRadius = agentRadius,
-					bodyRadius = ctx.bodyRadius,
-					blockedAt = result.narrowAt,
-					triedRadii = ctx.tried,
-				}
+			return fail(ctx, Errors.CorridorTooNarrow, {
+				requiredRadius = round2(result.narrowFit / Util.BODY_RADIUS_RATIO),
+				agentRadius = agentRadius,
+				bodyRadius = ctx.bodyRadius,
+				blockedAt = result.narrowAt,
+				rejectedRoute = result.narrowRoute, -- a rota que não coube (Debug a desenha em vermelho)
+				triedRadii = ctx.tried,
+			}, goalRaw, goal)
 		end
 		if result.finishBlocked then
-			return nil,
-				Errors.GoalUnreachable,
-				{
-					nearestValid = findNearestStandable(goal, ctx, NEAREST_SEARCH_MAX),
-					requestedGoal = goalRaw,
-				}
+			return fail(ctx, Errors.GoalUnreachable, {
+				nearestValid = findNearestStandable(goal, ctx, NEAREST_SEARCH_MAX),
+				requestedGoal = goalRaw,
+			}, goalRaw, goal)
 		end
-		return nil, Errors.NoPath, { triedRadii = ctx.tried }
+		return fail(ctx, Errors.NoPath, { triedRadii = ctx.tried }, goalRaw, goal)
 	end
 
 	-- a rota já vem preparada (origem no chão, suavizada e congelada) de runLadder

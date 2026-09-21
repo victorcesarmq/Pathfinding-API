@@ -611,6 +611,35 @@ local function safe(name: string, fn: () -> boolean): boolean
 	return res
 end
 
+-- A engine (tolerante) devolve a reta que passa a menos de um raio de corpo da quina de um pilar. O
+-- reparo insere um desvio: a rota tem de existir e passar pela validação de volume (D-031).
+local function testGrazingCorner(): boolean
+	local area = newArea()
+	addFloor(area, "Floor", 0, 0, 120, 60)
+	addBlock(area, "Pillar", Vector3.new(0, 4, 0), Vector3.new(4, 8, 4)) -- x e z em [-2, 2]
+	local start = TEST_ORIGIN + Vector3.new(-40, 0, -4)
+	local goal = TEST_ORIGIN + Vector3.new(40, 0, 9.4) -- a reta passa a ~0.4 da quina (-2, 2)
+	task.wait(NAVMESH_SETTLE)
+	local rig = makeRig(area, start)
+	local options = resolveFor(rig)
+	local wps, reason, details = RouteSolver.solve(rig, goal, options)
+	local clear = false
+	if wps then
+		clear = RouteSolver.isRouteClear(rig, wps, options, 1, nil)
+	end
+	return report(
+		"Rota: reta que roça a quina de um pilar é reparada e cabe",
+		wps ~= nil and clear,
+		string.format(
+			"%s, %d waypoints, validação de volume: %s, %s",
+			wps and "rota" or tostring(reason),
+			wps and #wps or 0,
+			tostring(clear),
+			describe(details)
+		)
+	)
+end
+
 function Tests.Phase2(): boolean
 	print("[SmartPathTests] ==== Fase 2: RouteSolver + RouteCache + Simplifier ====")
 	local results = {
@@ -630,6 +659,7 @@ function Tests.Phase2(): boolean
 		safe("vão no chão", testNoCutOverHole),
 		safe("ações do Simplifier", testSimplifierKeepsActions),
 		safe("destino dentro da parede", testGoalInsideWall),
+		safe("quina de pilar", testGrazingCorner),
 	}
 	local allOk = true
 	for _, ok in ipairs(results) do
@@ -1719,6 +1749,624 @@ function Tests.Phase5(): boolean
 		safe("laço 10/s", testCompatLoop),
 		safe("blocked", testCompatBlocked),
 	}
+	local allOk = true
+	for _, ok in ipairs(results) do
+		allOk = allOk and ok
+	end
+	print("[SmartPathTests] ==== Resultado: " .. (allOk and "TUDO PASSOU" or "HÁ FALHAS ACIMA") .. " ====")
+	return allOk
+end
+
+-- ===================== Fase 6: diagnóstico e debug visual =====================
+-- Uso: require(game.ServerStorage.SmartPathTests).Phase6()
+-- Um cenário reproduzível por código de erro (a lista dos nomes sai no Output como "cenário <código>"),
+-- mais os testes do explain, do Debug desligado, do Debug ligado e do painel. Leva alguns minutos.
+
+local LogService = game:GetService("LogService")
+local ServerStorage = game:GetService("ServerStorage")
+local AgentModule = require(ReplicatedStorage.SmartPath.Agent)
+local SmartDebug = SmartPath.Debug
+
+local function baseOptions(extra: { [string]: any }?): { [string]: any }
+	local options: { [string]: any } = { Agent = { Radius = 2, Height = 5 } }
+	if extra then
+		for k, v in pairs(extra) do
+			options[k] = v
+		end
+	end
+	return options
+end
+
+-- MoveTo bloqueante de nível 0 com limite de tempo: (respondeu, ok, motivo, details)
+local function moveOutcome(
+	rig: Model,
+	target: Vector3,
+	extra: { [string]: any }?,
+	timeout: number?
+): (boolean, boolean?, string?, { [string]: any }?)
+	local finished, res = runWithTimeout(timeout or 45, function()
+		return SmartPath.MoveTo(rig, target, baseOptions(extra) :: any)
+	end)
+	if not finished then
+		return false, nil, nil, nil
+	end
+	return true, res[1], res[2], res[3]
+end
+
+-- "details preenchidos": o texto de explain não pode ter o "?" que marca dado ausente
+local function explainClean(reason: string?, details: { [string]: any }?): (boolean, string)
+	local text = SmartPath.explain(reason, details)
+	return #text > 0 and not string.find(text, "?", 1, true), text
+end
+
+local function checkFailure(
+	title: string,
+	code: string,
+	answered: boolean,
+	ok: boolean?,
+	reason: string?,
+	details: { [string]: any }?,
+	extraOk: boolean?
+): boolean
+	local clean, text = explainClean(reason, details)
+	info("cenário " .. code, title)
+	info("explain", text)
+	return report(
+		string.format("Fase 6: %s -> %s", title, code),
+		answered and ok == false and reason == code and clean and extraOk ~= false,
+		string.format(
+			"respondeu %s, motivo %s, texto limpo %s, %s",
+			tostring(answered),
+			tostring(reason),
+			tostring(clean),
+			describe(details)
+		)
+	)
+end
+
+-- ----- um cenário por código -----
+
+local function testCodeNoPath(): boolean
+	local area = newArea()
+	addFloor(area, "FloorA", -20, 0, 60, 40)
+	addFloor(area, "Island", 60, 0, 30, 40)
+	task.wait(NAVMESH_SETTLE)
+	local rig = makeRig(area, TEST_ORIGIN + Vector3.new(-30, 0, 0))
+	local answered, ok, reason, details = moveOutcome(rig, TEST_ORIGIN + Vector3.new(60, 0, 0))
+	local tried = details and details.triedRadii
+	return checkFailure(
+		"ilha separada por um vão de 35 studs",
+		"no_path",
+		answered,
+		ok,
+		reason,
+		details,
+		typeof(tried) == "table" and #(tried :: { any }) >= 1
+	)
+end
+
+local function testCodeCorridorTooNarrow(): boolean
+	local area = newArea()
+	local start, goal = buildCorridor(area, 2)
+	task.wait(NAVMESH_SETTLE)
+	local rig = makeRig(area, start)
+	local answered, ok, reason, details = moveOutcome(rig, goal)
+	local required = details and details.requiredRadius
+	local agentRadius = details and details.agentRadius
+	return checkFailure(
+		"corredor de 2 studs para um agente de raio 2",
+		"corridor_too_narrow",
+		answered,
+		ok,
+		reason,
+		details,
+		typeof(required) == "number" and typeof(agentRadius) == "number" and required < agentRadius
+	)
+end
+
+local function testCodeObstacleTooTall(): boolean
+	local area = newArea()
+	addFloor(area, "Floor", 0, 0, 120, 60)
+	-- recinto de 16x16 com paredes de 30 studs: o destino está lá dentro
+	addBlock(area, "PenN", Vector3.new(30, 15, 9), Vector3.new(20, 30, 2))
+	addBlock(area, "PenS", Vector3.new(30, 15, -9), Vector3.new(20, 30, 2))
+	addBlock(area, "PenW", Vector3.new(21, 15, 0), Vector3.new(2, 30, 20))
+	addBlock(area, "PenE", Vector3.new(39, 15, 0), Vector3.new(2, 30, 20))
+	task.wait(NAVMESH_SETTLE)
+	local rig = makeRig(area, TEST_ORIGIN + Vector3.new(-20, 0, 0))
+	local answered, ok, reason, details = moveOutcome(rig, TEST_ORIGIN + Vector3.new(30, 0, 0))
+	local height = details and details.height
+	local maxJump = details and details.maxJump
+	return checkFailure(
+		"recinto com paredes de 30 studs",
+		"obstacle_too_tall",
+		answered,
+		ok,
+		reason,
+		details,
+		typeof(height) == "number" and typeof(maxJump) == "number" and height > maxJump
+	)
+end
+
+local function testCodeNoLanding(): boolean
+	local area = newArea()
+	addFloor(area, "FloorA", -25, 0, 50, 40)
+	addBlock(area, "Lip", Vector3.new(1, 2, 0), Vector3.new(2, 4, 40)) -- muro saltável de 4 studs
+	addFloor(area, "Island", 60, 0, 30, 40) -- e depois do muro só há vazio até a ilha
+	task.wait(NAVMESH_SETTLE)
+	local rig = makeRig(area, TEST_ORIGIN + Vector3.new(-20, 0, 0))
+	local answered, ok, reason, details = moveOutcome(rig, TEST_ORIGIN + Vector3.new(60, 0, 0))
+	local drop = details and details.drop
+	return checkFailure(
+		"muro de 4 studs e vazio do outro lado",
+		"no_landing",
+		answered,
+		ok,
+		reason,
+		details,
+		typeof(drop) == "number" and drop >= 14
+	)
+end
+
+local function testCodeGoalUnreachable(): boolean
+	local area = newArea()
+	addFloor(area, "Floor", 0, 0, 80, 60)
+	addBlock(area, "Rock", Vector3.new(20, 3, 0), Vector3.new(8, 6, 8))
+	task.wait(NAVMESH_SETTLE)
+	local rig = makeRig(area, TEST_ORIGIN + Vector3.new(-20, 0, 0))
+	local answered, ok, reason, details = moveOutcome(rig, TEST_ORIGIN + Vector3.new(20, 3, 0))
+	return checkFailure(
+		"destino dentro de uma rocha",
+		"goal_unreachable",
+		answered,
+		ok,
+		reason,
+		details,
+		details ~= nil and typeof(details.nearestValid) == "Vector3"
+	)
+end
+
+-- Parede invisível e colidível sem nome de gatilho (a lib não a filtra): a malha a vê, o corredor
+-- fica sem rota e a causa é a parte. Com tag NavSolid é intenção do desenvolvedor: nada de aviso.
+local function buildInvisibleWall(area: Folder, name: string): Part
+	addFloor(area, "Floor", 0, 0, 100, 60)
+	local wall = addBlock(area, name, Vector3.new(0, 5, 0), Vector3.new(2, 10, 60))
+	wall.Transparency = 1
+	return wall
+end
+
+local function testCodeInvisibleCollider(): boolean
+	local area = newArea()
+	local wall = buildInvisibleWall(area, "MapEdge")
+	task.wait(NAVMESH_SETTLE)
+	local rig = makeRig(area, TEST_ORIGIN + Vector3.new(-20, 0, 0))
+	local goal = TEST_ORIGIN + Vector3.new(20, 0, 0)
+	local answered, ok, reason, details = moveOutcome(rig, goal)
+	local first = checkFailure(
+		"parede invisível colidível entre o agente e o destino",
+		"invisible_collider",
+		answered,
+		ok,
+		reason,
+		details,
+		details ~= nil and details.instance == wall and details.underlying == "no_path"
+	)
+
+	-- a mesma parede com NavSolid é limite de mapa declarado: a rota falha, mas sem apontar a parte
+	CollectionService:AddTag(wall, "NavSolid")
+	task.wait(0.2)
+	local route, why = SmartPath.GetRoute(rig, goal, baseOptions() :: any)
+	local second = report(
+		"Fase 6: parede invisível com tag NavSolid não vira invisible_collider",
+		route == nil and why ~= "invisible_collider",
+		"motivo: " .. tostring(why)
+	)
+	return first and second
+end
+
+-- Gatilho invisível que a lib filtra (nome "TriggerZone": a malha o atravessa) mas o corpo bate:
+-- o agente trava, e ao esgotar o anti-stuck a causa é apontada em vez de um "stuck" genérico.
+local function testCodeInvisibleColliderStuck(): boolean
+	local area = newArea()
+	addFloor(area, "Floor", 0, 0, 100, 60)
+	local trigger = addBlock(area, "TriggerZone", Vector3.new(1, 5, 0), Vector3.new(2, 10, 60))
+	trigger.Transparency = 1
+	task.wait(NAVMESH_SETTLE + 1)
+	local rig = makeRig(area, TEST_ORIGIN + Vector3.new(-10, 0, 0))
+	local answered, ok, reason, details = moveOutcome(rig, TEST_ORIGIN + Vector3.new(14, 0, 0), nil, 60)
+	return checkFailure(
+		"gatilho invisível filtrado pela lib, mas sólido para o corpo",
+		"invisible_collider",
+		answered,
+		ok,
+		reason,
+		details,
+		details ~= nil and details.instance == trigger and details.underlying == "stuck"
+	)
+end
+
+local function testCodeStuck(): boolean
+	Geometry.start()
+	local area = newArea()
+	addFloor(area, "Floor", 0, 0, 80, 60)
+	local wall = addBlock(area, "InvisibleToNav", Vector3.new(1, 5, 0), Vector3.new(2, 10, 60))
+	CollectionService:AddTag(wall, "NavIgnore") -- a malha atravessa, o corpo não
+	task.wait(NAVMESH_SETTLE + 1)
+	local rig = makeRig(area, TEST_ORIGIN + Vector3.new(-10, 0, 0))
+	local answered, ok, reason, details = moveOutcome(rig, TEST_ORIGIN + Vector3.new(12, 0, 0), nil, 60)
+	return checkFailure(
+		"parede visível marcada NavIgnore",
+		"stuck",
+		answered,
+		ok,
+		reason,
+		details,
+		details ~= nil and typeof(details.position) == "Vector3" and typeof(details.strikes) == "number"
+	)
+end
+
+local function testCodeCancelled(): boolean
+	local area = newArea()
+	addFloor(area, "Floor", 0, 0, 120, 40)
+	task.wait(NAVMESH_SETTLE)
+	local rig = makeRig(area, TEST_ORIGIN + Vector3.new(-40, 0, 0))
+	local agent = SmartPath.MoveToAsync(rig, TEST_ORIGIN + Vector3.new(40, 0, 0), baseOptions() :: any)
+	task.wait(0.6)
+	agent:Stop()
+	local ok, reason, details = agent:Await()
+	agent:Destroy()
+	return checkFailure("Stop() no meio do caminho", "cancelled", true, ok, reason, details)
+end
+
+local function testCodeCharacterLost(): boolean
+	local area = newArea()
+	addFloor(area, "Floor", 0, 0, 120, 40)
+	task.wait(NAVMESH_SETTLE)
+	local rig = makeRig(area, TEST_ORIGIN + Vector3.new(-40, 0, 0))
+	local agent = SmartPath.MoveToAsync(rig, TEST_ORIGIN + Vector3.new(40, 0, 0), baseOptions() :: any)
+	task.wait(0.6)
+	local humanoid = rig:FindFirstChildOfClass("Humanoid") :: Humanoid
+	humanoid.Health = 0
+	local ok, reason, details = agent:Await()
+	agent:Destroy()
+	return checkFailure("o personagem morre durante a rota", "character_lost", true, ok, reason, details)
+end
+
+-- O orçamento (45 s + 4x o tempo ideal) é longo demais para um teste: encurta o orçamento e deixa o
+-- agente lento (WalkSpeed 4: 60 studs levariam 15 s).
+local function testCodeTimeout(): boolean
+	local area = newArea()
+	addFloor(area, "Floor", 0, 0, 120, 40)
+	task.wait(NAVMESH_SETTLE)
+	local rig = makeRig(area, TEST_ORIGIN + Vector3.new(-30, 0, 0))
+	local humanoid = rig:FindFirstChildOfClass("Humanoid") :: Humanoid
+	humanoid.WalkSpeed = 4
+
+	local tuning = AgentModule._tuning
+	local saved = table.clone(tuning)
+	tuning.TimeoutBase, tuning.TimeoutFactor = 2, 0.1
+	local pcallOk, err = pcall(function()
+		local answered, ok, reason, details = moveOutcome(rig, TEST_ORIGIN + Vector3.new(30, 0, 0), nil, 30)
+		local elapsed = details and details.elapsed
+		local passed = checkFailure(
+			"agente lento demais para o orçamento de tempo",
+			"timeout",
+			answered,
+			ok,
+			reason,
+			details,
+			typeof(elapsed) == "number" and elapsed >= 2 and elapsed < 10
+		)
+		tuning.TimeoutBase, tuning.TimeoutFactor = saved.TimeoutBase, saved.TimeoutFactor
+		return passed
+	end)
+	tuning.TimeoutBase, tuning.TimeoutFactor = saved.TimeoutBase, saved.TimeoutFactor
+	if not pcallOk then
+		error(err)
+	end
+	return err :: any
+end
+
+-- ----- explain -----
+
+local function testExplain(): boolean
+	local sampleInstance = Instance.new("Part")
+	sampleInstance.Name = "ParedeInvisivel"
+	local samples: { [string]: { [string]: any } } = {
+		no_path = { triedRadii = { 2, 1, 0.5 } },
+		corridor_too_narrow = { requiredRadius = 0.8, agentRadius = 2.0 },
+		obstacle_too_tall = { height = 12, maxJump = 7.2 },
+		no_landing = { drop = 20 },
+		goal_unreachable = { nearestValid = Vector3.new(1, 2, 3) },
+		invisible_collider = { instance = sampleInstance },
+		stuck = { position = Vector3.new(4, 5, 6), strikes = 4 },
+		cancelled = {},
+		character_lost = {},
+		timeout = { elapsed = 45.2 },
+	}
+	local failures = {}
+	for _, code in ipairs(SmartPath.Errors.All) do
+		local details = samples[code]
+		if not details then
+			table.insert(failures, code .. ": sem amostra no teste")
+		else
+			local clean, text = explainClean(code, details)
+			if not clean then
+				table.insert(failures, code .. ": texto vazio ou com '?' -> " .. text)
+			end
+		end
+	end
+	local corridor = SmartPath.explain("corridor_too_narrow", samples.corridor_too_narrow)
+	local exampleOk = string.find(corridor, "0.8", 1, true) ~= nil
+		and string.find(corridor, "2.0", 1, true) ~= nil
+		and string.find(corridor, "raio", 1, true) ~= nil
+	info("explain corridor_too_narrow", corridor)
+
+	-- nunca erra: details ausente, incompleto ou de tipo errado, código desconhecido ou nil
+	local robust = pcall(function()
+		for _, code in ipairs(SmartPath.Errors.All) do
+			SmartPath.explain(code, nil)
+			SmartPath.explain(code, {})
+			SmartPath.explain(code, { height = "x", position = "y", instance = 5, triedRadii = 3 } :: any)
+		end
+		assert(type(SmartPath.explain(nil, nil)) == "string")
+		assert(string.find(SmartPath.explain("codigo_novo", nil), "codigo_novo", 1, true))
+	end)
+	sampleInstance:Destroy()
+	return report(
+		"Fase 6: explain gera uma frase para cada um dos 10 códigos e nunca erra",
+		#SmartPath.Errors.All == 10 and #failures == 0 and exampleOk and robust,
+		string.format("falhas: %s, exemplo do corredor %s, robusto %s", table.concat(failures, "; "), tostring(exampleOk), tostring(robust))
+	)
+end
+
+-- ----- Debug desligado e ligado -----
+
+local function captureSmartPathLog(): ({ string }, () -> ())
+	local lines: { string } = {}
+	local conn = LogService.MessageOut:Connect(function(message: string)
+		if string.find(message, "[SmartPath]", 1, true) then
+			table.insert(lines, message)
+		end
+	end)
+	return lines, function()
+		conn:Disconnect()
+	end
+end
+
+-- Mureta de 3 studs sem passagem: o agente salta, então rota, salto e chegada são exercitados.
+local function buildMuretaCourse(area: Folder): (Vector3, Vector3)
+	addFloor(area, "Floor", 5, 0, 70, 40)
+	addBlock(area, "Mureta", Vector3.new(1, 1.5, 0), Vector3.new(2, 3, 80))
+	return TEST_ORIGIN + Vector3.new(-6, 0, 0), TEST_ORIGIN + Vector3.new(14, 0, 0)
+end
+
+local function testDebugOff(): boolean
+	SmartDebug.clear()
+	cleanupArea()
+	task.wait()
+	local before = #workspace:GetDescendants()
+	local lines, stopLog = captureSmartPathLog()
+
+	local area = newArea()
+	local start, goal = buildMuretaCourse(area)
+	addBlock(area, "Rock", Vector3.new(30, 3, 0), Vector3.new(8, 6, 8))
+	task.wait(NAVMESH_SETTLE)
+	local rig = makeRig(area, start)
+	local answered, ok = moveOutcome(rig, goal, nil, 40) -- chega (com salto)
+	local _, _, failReason = moveOutcome(rig, TEST_ORIGIN + Vector3.new(30, 3, 0), nil, 40) -- e uma falha
+	local folderExists = SmartDebug.peekFolder() ~= nil
+
+	cleanupArea()
+	task.wait(0.5)
+	stopLog()
+	local after = #workspace:GetDescendants()
+	return report(
+		"Fase 6: Debug desligado não cria instância nem imprime",
+		answered and ok == true and failReason == "goal_unreachable" and not folderExists and after == before and #lines == 0,
+		string.format(
+			"chegou %s, falha %s, pasta de debug %s, instâncias do workspace %d -> %d, linhas [SmartPath]: %d%s",
+			tostring(ok),
+			tostring(failReason),
+			tostring(folderExists),
+			before,
+			after,
+			#lines,
+			#lines > 0 and (" (" .. lines[1] .. ")") or ""
+		)
+	)
+end
+
+-- a cor lida de volta de uma Part pode diferir do Color3 original na última casa
+local function sameColor(a: Color3, b: Color3): boolean
+	return math.abs(a.R - b.R) < 0.01 and math.abs(a.G - b.G) < 0.01 and math.abs(a.B - b.B) < 0.01
+end
+
+local function testDebugOn(): boolean
+	SmartDebug.clear()
+	local area = newArea()
+	local start, goal = buildMuretaCourse(area)
+	task.wait(NAVMESH_SETTLE)
+	local rig = makeRig(area, start)
+	local lines, stopLog = captureSmartPathLog()
+	-- primeiro um trecho plano (rota da malha e disco do raio), depois a mureta (salto)
+	local answeredWalk, okWalk = moveOutcome(rig, start + Vector3.new(-8, 0, 0), { Debug = true }, 40)
+	local answeredJump, okJump = moveOutcome(rig, goal, { Debug = true }, 40)
+	local answered, ok = answeredWalk and answeredJump, okWalk == true and okJump == true
+	task.wait(0.3)
+	stopLog()
+
+	local folder = SmartDebug.peekFolder()
+	local total, bad, cylinders, jumpRoute, landings, walkPoints = 0, 0, 0, 0, 0, 0
+	if folder then
+		for _, d in ipairs(folder:GetDescendants()) do
+			if d:IsA("BasePart") then
+				total += 1
+				if d.CanCollide or d.CanQuery or d.CanTouch or not d.Anchored then
+					bad += 1
+				end
+				if d:IsA("Part") and d.Shape == Enum.PartType.Cylinder then
+					cylinders += 1
+				end
+				if d:IsA("Part") and d.Shape == Enum.PartType.Ball then
+					if sameColor(d.Color, SmartDebug.Colors.Landing) then
+						landings += 1
+					elseif sameColor(d.Color, SmartDebug.Colors.Walk) then
+						walkPoints += 1
+					elseif sameColor(d.Color, SmartDebug.Colors.Jump) then
+						jumpRoute += 1
+					end
+				end
+			end
+		end
+	end
+
+	-- a pasta é excluída dos RaycastParams da lib, e um raio comum não a enxerga (CanQuery = false)
+	local params = Geometry.buildRaycastParams()
+	local excluded = folder ~= nil and table.find(params.FilterDescendantsInstances, folder) ~= nil
+	local probe = if folder and total > 0 then folder:FindFirstChildWhichIsA("BasePart", true) else nil
+	local rayHitsDebug = false
+	if probe and folder then
+		local hit = workspace:Raycast(probe.Position + Vector3.new(0, 6, 0), Vector3.new(0, -12, 0))
+		rayHitsDebug = hit ~= nil and hit.Instance:IsDescendantOf(folder)
+	end
+	SmartDebug.clear()
+	return report(
+		"Fase 6: Debug ligado desenha rota, raio efetivo e salto, com partes sem colisão nem consulta",
+		answered
+			and ok
+			and total > 0
+			and bad == 0
+			and cylinders >= 1
+			and walkPoints >= 1
+			and landings >= 1
+			and excluded
+			and not rayHitsDebug
+			and #lines >= 1,
+		string.format(
+			"partes %d (fora da regra %d), discos de raio %d, pontos de andar %d, de salto %d, de pouso %d, pasta nos RaycastParams %s, raio atinge o debug %s, linhas [SmartPath] %d",
+			total,
+			bad,
+			cylinders,
+			walkPoints,
+			jumpRoute,
+			landings,
+			tostring(excluded),
+			tostring(rayHitsDebug),
+			#lines
+		)
+	)
+end
+
+local function testDebugFailureMarker(): boolean
+	SmartDebug.clear()
+	local area = newArea()
+	local wall = buildInvisibleWall(area, "MapEdge")
+	task.wait(NAVMESH_SETTLE)
+	local rig = makeRig(area, TEST_ORIGIN + Vector3.new(-20, 0, 0))
+	local lines, stopLog = captureSmartPathLog()
+	local answered, _, reason = moveOutcome(rig, TEST_ORIGIN + Vector3.new(20, 0, 0), { Debug = true })
+	task.wait(0.3)
+	stopLog()
+
+	local folder = SmartDebug.peekFolder()
+	local boxAdornee: Instance? = nil
+	if folder then
+		local box = folder:FindFirstChildWhichIsA("SelectionBox", true)
+		boxAdornee = box and box.Adornee
+	end
+	local printedCause = false
+	for _, line in ipairs(lines) do
+		if string.find(line, "invisible_collider", 1, true) then
+			printedCause = true
+		end
+	end
+	SmartDebug.clear()
+	return report(
+		"Fase 6: Debug ligado marca a parte invisível que bloqueou a rota e imprime a explicação",
+		answered and reason == "invisible_collider" and boxAdornee == wall and printedCause,
+		string.format(
+			"motivo %s, moldura na parte certa %s, causa impressa %s",
+			tostring(reason),
+			tostring(boxAdornee == wall),
+			tostring(printedCause)
+		)
+	)
+end
+
+local function testDebugPanel(): boolean
+	local area = newArea()
+	addFloor(area, "Floor", 0, 0, 120, 40)
+	addBlock(area, "Rock", Vector3.new(30, 3, 20), Vector3.new(8, 6, 8))
+	task.wait(NAVMESH_SETTLE)
+	local rig = makeRig(area, TEST_ORIGIN + Vector3.new(-40, 0, 0))
+	local agent = SmartPath.MoveToAsync(rig, TEST_ORIGIN + Vector3.new(40, 0, 0), baseOptions() :: any)
+	-- no servidor não há PlayerGui: o painel é montado num pai qualquer para verificar o conteúdo
+	local panel = SmartDebug.showPanel(agent, ServerStorage)
+	local followingText = panel.GetText()
+	local hasCalc = waitUntil(function()
+		return agent._lastCalcTime ~= nil
+	end, 10)
+	panel.Refresh()
+	local calcText = (panel.Gui:FindFirstChildWhichIsA("TextLabel") :: TextLabel).Text
+	agent:Stop()
+
+	-- uma falha aparece com o motivo e a frase
+	local answered, _, reason = moveOutcome(rig, TEST_ORIGIN + Vector3.new(30, 3, 20), nil, 40)
+	panel.Refresh()
+	local failText = panel.GetText()
+
+	panel.Destroy()
+	local gone = panel.Gui.Parent == nil
+	local refreshAfterDestroy = pcall(panel.Refresh)
+	agent:Destroy()
+	local noServerGui = pcall(function()
+		SmartDebug.showPanel(agent) -- sem parent e sem LocalPlayer: erro claro, sem criar nada
+	end)
+	return report(
+		"Fase 6: painel mostra estado, rota, raio, tempo de cálculo, fila do Scheduler e último erro",
+		string.find(followingText, "Following", 1, true) ~= nil
+			and string.find(followingText, "Fila do Scheduler: ", 1, true) ~= nil
+			and hasCalc
+			and string.find(calcText, "ms", 1, true) ~= nil
+			and string.find(calcText, "Raio: ", 1, true) ~= nil
+			and answered
+			and reason == "goal_unreachable"
+			and string.find(failText, "Último erro: goal_unreachable", 1, true) ~= nil
+			and gone
+			and refreshAfterDestroy
+			and not noServerGui,
+		string.format(
+			"estado %s, cálculo %s, erro %s, painel removido %s",
+			tostring(string.find(followingText, "Following", 1, true) ~= nil),
+			tostring(string.find(calcText, "ms", 1, true) ~= nil),
+			tostring(string.find(failText, "Último erro", 1, true) ~= nil),
+			tostring(gone)
+		)
+	)
+end
+
+function Tests.Phase6(): boolean
+	print("[SmartPathTests] ==== Fase 6: diagnóstico e debug visual ====")
+	local results = {
+		safe("explain", testExplain),
+		safe("no_path", testCodeNoPath),
+		safe("corridor_too_narrow", testCodeCorridorTooNarrow),
+		safe("obstacle_too_tall", testCodeObstacleTooTall),
+		safe("no_landing", testCodeNoLanding),
+		safe("goal_unreachable", testCodeGoalUnreachable),
+		safe("invisible_collider", testCodeInvisibleCollider),
+		safe("invisible_collider (travou)", testCodeInvisibleColliderStuck),
+		safe("stuck", testCodeStuck),
+		safe("cancelled", testCodeCancelled),
+		safe("character_lost", testCodeCharacterLost),
+		safe("timeout", testCodeTimeout),
+		safe("debug desligado", testDebugOff),
+		safe("debug ligado", testDebugOn),
+		safe("debug: marca da falha", testDebugFailureMarker),
+		safe("painel", testDebugPanel),
+	}
+	SmartDebug.clear()
 	local allOk = true
 	for _, ok in ipairs(results) do
 		allOk = allOk and ok
