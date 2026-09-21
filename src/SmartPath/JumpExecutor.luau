@@ -1,7 +1,7 @@
 --!strict
 -- JumpExecutor.luau
--- Execução do salto nos modos Native e Injected (Seção 6 da ESPEC_NAVEGACAO_ROBLOX.md,
--- Fase 3 do plano), com restauração garantida das propriedades do Humanoid.
+-- Execução do salto nos modos Native e Injected, com restauração garantida das
+-- propriedades do Humanoid.
 --
 -- Native (padrão): ajusta JumpHeight/JumpPower para a altura exata, seta Humanoid.Jump e
 -- restaura quando o impulso já foi aplicado. O Humanoid cuida da física: zero conflito.
@@ -31,7 +31,7 @@ local BLOCKING_STATES = {
 	[ST.Physics] = true,
 }
 
--- Salvaguarda da ESPEC (task.delay(1, finish)): mesmo que nenhum evento chegue, o valor
+-- Salvaguarda (task.delay(1, finish)): mesmo que nenhum evento chegue, o valor
 -- original volta em no máximo isso.
 local RESTORE_TIMEOUT = 1
 

@@ -1,6 +1,7 @@
 --!strict
 -- Scenarios.luau
--- Os 11 cenários do place de demonstração (1 a 8 do plano; 9 a 11: caverna com zona invisível). Cada cenário tem UMA função de geometria (`build`),
+-- Os 11 cenários do place de demonstração (1 a 8: comparações gerais; 9 a 11: caverna com zona
+-- invisível). Cada cenário tem UMA função de geometria (`build`),
 -- chamada duas vezes com origens diferentes: o lado esquerdo (PathfindingService puro) e o
 -- direito (SmartPath) recebem geometria idêntica ao stud.
 --

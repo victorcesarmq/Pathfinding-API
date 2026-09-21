@@ -1,6 +1,6 @@
 --!strict
 -- RouteCache.luau
--- Cache de rotas por célula (Seção 3.4 da ESPEC_NAVEGACAO_ROBLOX.md, Fase 2 do plano).
+-- Cache de rotas por célula.
 -- Garante determinismo: mesmas células de origem/destino (e mesmo perfil de agente) devolvem
 -- EXATAMENTE a mesma lista de waypoints, por construção e não por torcer pela engine.
 -- As listas armazenadas são imutáveis (congeladas): quem consome não pode modificá-las.
@@ -38,7 +38,7 @@ export type RouteCache = typeof(setmetatable(
 	RouteCache
 ))
 
--- Defaults da ESPEC (NavConfig.Defaults.Cache).
+-- Defaults do cache.
 RouteCache.DEFAULT_CELL_SIZE = 2
 local DEFAULT_TTL = 15
 local DEFAULT_MAX_ENTRIES = 128

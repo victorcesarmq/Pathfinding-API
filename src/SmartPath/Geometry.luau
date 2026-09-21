@@ -1,22 +1,22 @@
 --!strict
 -- Geometry.luau
--- Filtro de geometria invisível colidível (Seção 5 da ESPEC_NAVEGACAO_ROBLOX.md, Fase 1
--- do plano de execução). Duas "vítimas" diferentes, dois remédios: PathfindingModifier
+-- Filtro de geometria invisível colidível. Duas "vítimas" diferentes, dois remédios:
+-- PathfindingModifier
 -- com PassThrough para a navmesh do PathfindingService, e RaycastParams filtrado para os
 -- raycasts da própria SmartPath (predição, suavização, chão).
 --
--- Singleton documentado (regra 2 da Seção 5 do plano): existe um por ambiente (cliente ou
+-- Singleton documentado: existe um por ambiente (cliente ou
 -- servidor) — cada um requer sua própria cópia do módulo e mantém sua própria lista.
 --
 -- AutoFilter/RequireNameMatch são globais ao ambiente, não por agente: ver D-006 em
--- DECISIONS.md sobre por que isso é assim, mesmo a Options.Geometry (Seção 3.5) sendo
--- lida por agente em fases futuras.
+-- DECISIONS.md sobre por que isso é assim, mesmo a Options.Geometry sendo
+-- lida por agente.
 
 local CollectionService = game:GetService("CollectionService")
 
 local Geometry = {}
 
--- Constantes internas de classificação (Seção 5.1 da ESPEC). Não fazem parte da tabela de
+-- Constantes internas de classificação. Não fazem parte da tabela de
 -- Options pública porque afetam o mapa inteiro, não um agente específico.
 local IGNORE_TAG = "NavIgnore"
 local SOLID_TAG = "NavSolid"
@@ -80,7 +80,7 @@ local function hasTagInAncestry(inst: Instance, tag: string): boolean
 	return false
 end
 
--- Classificação (ordem de precedência, Seção 5.1 da ESPEC):
+-- Classificação (ordem de precedência):
 -- 1) NavSolid  -> sempre sólido, precedência ABSOLUTA sobre tudo, inclusive heurística.
 -- 2) NavIgnore -> sempre atravessável.
 -- 3) CanCollide = false -> já ignorado pelo pathfinding; nada a fazer.
@@ -228,8 +228,8 @@ function Geometry.start()
 	end
 end
 
--- Desliga completamente e desfaz 100% do resíduo no mapa (regra 4 do plano + critério de
--- aceite da Fase 1: desligar não pode deixar efeito residual).
+-- Desliga completamente e desfaz 100% do resíduo no mapa: desligar não pode deixar efeito
+-- residual.
 function Geometry.stop()
 	if not started then
 		return
@@ -354,7 +354,7 @@ function Geometry.buildRaycastParams(extra: { Instance }?): RaycastParams
 end
 
 -- Lista partes invisíveis colidíveis que NÃO foram classificadas, para revisão manual.
--- Nunca alteramos CanCollide sozinhos (regra 4 e D-005): quem decide é o desenvolvedor.
+-- Nunca alteramos CanCollide sozinhos (D-005): quem decide é o desenvolvedor.
 function Geometry.audit(): { BasePart }
 	local suspects = {}
 	for _, d in ipairs(workspace:GetDescendants()) do

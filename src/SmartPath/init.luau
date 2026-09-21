@@ -1,6 +1,6 @@
 --!strict
 -- init.luau
--- Fachada pública da SmartPath (Seção 3 do plano de execução, CONGELADA):
+-- Fachada pública da SmartPath (API estável):
 --   nível 0 (MoveTo, MoveToAsync, GetRoute): uma linha, sem tabela de opções;
 --   nível 1 (new): agente persistente;
 --   nível 2 (Predictor, Simplifier, Geometry, Scheduler, Errors, Debug): peças soltas;
@@ -25,7 +25,7 @@ local SmartPath = {}
 
 SmartPath.Version = "1.0.0"
 
--- ===== Nível 2 — peças soltas (Seção 3.3) =====
+-- ===== Nível 2 — peças soltas =====
 SmartPath.Predictor = Predictor
 SmartPath.Simplifier = Simplifier
 SmartPath.Geometry = Geometry
@@ -41,10 +41,10 @@ function SmartPath.explain(reason: string?, details: { [string]: any }?): string
 	return Diagnostics.explain(reason, details)
 end
 
--- ===== Camada de compatibilidade (Seção 3.4) =====
+-- ===== Camada de compatibilidade =====
 SmartPath.Service = Compat.Service
 
--- ===== Nível 1 — agente persistente (Seção 3.2) =====
+-- ===== Nível 1 — agente persistente =====
 
 -- Um agente por personagem, para os níveis 0 e 1 (D-033): dois agentes no mesmo Humanoid brigariam
 -- pelo Humanoid:Move. `SmartPath.new` recusa criar um segundo; `SmartPath.MoveTo` reaproveita o
@@ -89,7 +89,7 @@ function SmartPath.new(characterOrHumanoid: Types.CharacterLike, options: Types.
 	return agent
 end
 
--- ===== Nível 0 — uma linha (Seção 3.1) =====
+-- ===== Nível 0 — uma linha =====
 
 -- Nível 0: um agente por Humanoid, reaproveitado entre chamadas. MoveTo em laço não cria um agente (com
 -- suas conexões) a cada chamada, e duas chamadas para o mesmo personagem se cancelam em vez de

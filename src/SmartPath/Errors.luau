@@ -1,6 +1,6 @@
 --!strict
 -- Errors.luau
--- Códigos de erro diagnósticos da SmartPath (Seção 3.7 do plano de execução).
+-- Códigos de erro diagnósticos da SmartPath.
 -- CONGELADO: mudar uma chave aqui é mudança de contrato público, exige autorização.
 
 export type ErrorCode =

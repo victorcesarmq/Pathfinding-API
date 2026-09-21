@@ -1,13 +1,13 @@
 --!strict
 -- Predictor.luau
--- Predição balística de salto (Seção 4 da ESPEC_NAVEGACAO_ROBLOX.md, Fase 3 do plano).
+-- Predição balística de salto.
 -- Diz se o agente, com o JumpHeight REAL que tem (qualquer valor, não o limite interno
 -- fixo da malha do PathfindingService), consegue saltar o obstáculo entre ele e o alvo, de
 -- que altura, a que distância da parede decolar e onde pousa.
 --
 -- Etapas: (1) direção, (2) parede na altura do joelho, (3) alto demais?, (4) topo do
 -- obstáculo, (5) profundidade e ponto de pouso, (6) balística e (7) corredor aéreo. A ordem
--- de 6 e 7 é invertida em relação à ESPEC: o corredor precisa da altura do apex e do ponto
+-- de 6 e 7 é invertida em relação à implementação de referência: o corredor precisa da altura do apex e do ponto
 -- de decolagem, que só existem depois da balística (ver D-014).
 --
 -- Retorna (plano, "ok") ou (nil, motivo, dados?). Todo retorno negativo traz o motivo:
@@ -50,7 +50,7 @@ export type Plan = {
 	tDown: number,
 }
 
--- Constantes da ESPEC de referência (NavConfig.Defaults.Jump). Os valores marcados [VALIDAR]
+-- Constantes de referência. Os valores marcados [VALIDAR]
 -- dependem do rig e das animações do jogo e precisam ser confirmados no Studio.
 local DEFAULT_AGENT_RADIUS = 2
 local DEFAULT_AGENT_HEIGHT = 5
@@ -188,7 +188,7 @@ function Predictor.analyze(ctx: Context): (Plan?, string, { [string]: any }?)
 		landing = floor.Position
 	end
 
-	-- 6) balística. Em vez da altura mínima da ESPEC (clareza + APEX_EXTRA), o apex é o menor
+	-- 6) balística. Em vez da altura mínima da implementação de referência (clareza + APEX_EXTRA), o apex é o menor
 	-- que dá tempo ACIMA do obstáculo para o corpo cruzar a profundidade inteira: os pés
 	-- precisam ficar acima do topo enquanto o centro percorre profundidade + 2 raios (a frente
 	-- do corpo passa a face, a traseira passa a borda de trás). Tempo acima da clareza para um

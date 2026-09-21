@@ -1,8 +1,8 @@
 --!strict
 -- Scheduler.luau
 -- Fila global de cálculos de rota com orçamento por frame, prioridade numérica,
--- cancelamento e coalescência de pedidos idênticos (plano de execução, Fase 1).
--- Singleton documentado (regra 2 da Seção 5 do plano): existe um por ambiente
+-- cancelamento e coalescência de pedidos idênticos.
+-- Singleton documentado: existe um por ambiente
 -- (cliente/servidor), cada um com sua própria fila.
 --
 -- Prioridade: número MAIOR = mais urgente (ver D-007 em DECISIONS.md). Em empate, o
@@ -189,7 +189,7 @@ local function runEntry(entry: Entry)
 			results = packed
 		else
 			-- falha aqui não é rotina de debug: é bug real, por isso não fica atrás de
-			-- options.Debug (mesmo padrão do warn em Agent:_compute na ESPEC de referência)
+			-- options.Debug
 			warn("[SmartPath] Scheduler: job falhou:", packed)
 			results = table.pack(nil, "scheduler_job_error")
 		end

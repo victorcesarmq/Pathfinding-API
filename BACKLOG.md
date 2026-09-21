@@ -1,11 +1,10 @@
 # BACKLOG
 
-Itens explicitamente fora do escopo da v1.0 (Seção 2.2 do
-`SMARTPATH_PLANO_DE_EXECUCAO.md`) e qualquer ideia nova que surja durante a implementação.
-Regra: qualquer coisa fora da Seção 2.1 do plano vira linha aqui, nunca é implementada sem
-autorização.
+Itens explicitamente fora do escopo da v1.0 e qualquer ideia nova que surja durante a
+implementação. Regra: qualquer coisa fora do escopo da v1.0 vira linha aqui, nunca é implementada
+sem autorização.
 
-## Fora da v1.0 (backlog explícito do plano)
+## Fora da v1.0 (backlog explícito)
 
 - **Gerador automático de `PathfindingLink` ("baker")** → v2, Fase 10. Varredura do mapa por
   bordas e desníveis, teste de alcançabilidade por par (origem, destino) com o perfil de
@@ -47,8 +46,8 @@ autorização.
   um obstáculo alto atrás de um desvio não é apontado, e sai `no_path`.
 - **`timeout` sem opção pública** (Fase 6, D-025): 45 s + 4x o tempo ideal, fixo. Um jogo com
   agentes muito lentos em mapas enormes pode precisar de um campo em `Options`; isso exige
-  reabrir a Seção 3.5 congelada.
-- **`Scheduler` faz `warn` incondicional quando um job lança erro** (Fase 6): a regra 10 diz que
+  reabrir a tabela de opções, que é estável.
+- **`Scheduler` faz `warn` incondicional quando um job lança erro** (Fase 6): a regra do projeto é que
   só `Options.Debug` imprime, mas o `Scheduler` não conhece opções. Hoje só dispara em bug.
 - **Painel de debug não validado no cliente** (Fase 6): o conteúdo foi verificado no servidor
   (`GetText`), mas a aparência e o `PlayerGui` só existem num jogador real.

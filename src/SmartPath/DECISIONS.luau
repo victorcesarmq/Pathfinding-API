@@ -1,5 +1,5 @@
 -- DECISIONS.luau
--- Espelha DECISIONS.md em runtime (Seção 4 do plano de execução). Ao adicionar uma
+-- Espelha DECISIONS.md em runtime. Ao adicionar uma
 -- decisão nova, atualize os dois arquivos juntos.
 
 return [[
@@ -33,7 +33,7 @@ Consequência: yields são feitos com primitivas nativas (task.spawn, task.wait,
 Data: 2026-09-20
 Contexto: gerar PathfindingLink automaticamente (baker) resolveria salto de forma mais barata
 em runtime que a predição balística.
-Decisão: não implementar na v1; registrado como Fase 10 do plano.
+Decisão: não implementar na v1; registrado como v2 (Fase 10).
 Motivo: é a peça mais valiosa e mais trabalhosa do projeto — misturá-la à v1 arrisca inflar o
 escopo e atrasar o lançamento.
 Consequência: a v1 depende de predição em runtime (SmartPath.Predictor) para saltos não
@@ -88,7 +88,7 @@ Data: 2026-09-20
 Contexto: Agent.Radius vem do bounding box (inclui membros que não colidem). Validar com ele
 recusaria um corredor de 4 studs que o corpo atravessa folgado.
 Decisão: o Spherecast de validação usa Util.getBodyRadius = Agent.Radius * 0.6, a proporção
-da ESPEC de referência (sonda de 1.2 para raio 2).
+da implementação de referência (sonda de 1.2 para raio 2).
 Motivo: o raio do CreatePath é folga de navegação; o de validação deve ser o físico.
 Consequência: requiredRadius em corridor_too_narrow é convertido de volta para a escala de
 Agent.Radius (raio que cabe / 0.6). Constante a validar no rig real do jogo.
@@ -134,7 +134,7 @@ Consequência: uma alteração do jogo em JumpHeight dentro do 1s do salto é so
 
 ## D-014 — O apex do salto é dimensionado pela profundidade; corredor aéreo depois da balística
 Data: 2026-09-20
-Contexto: a ESPEC usa o apex mínimo e exige tempo acima do obstáculo para profundidade + 2 x
+Contexto: a implementação de referência usa o apex mínimo e exige tempo acima do obstáculo para profundidade + 2 x
 AgentRadius, o que reprova até uma mureta de 3 studs com 1.5 de profundidade.
 Decisão: o Predictor escolhe o menor apex que dá tempo acima do obstáculo para o centro
 cruzar profundidade + 2 x raio do corpo + margem (h = g x t² / 8); só devolve too_deep se esse
@@ -183,7 +183,7 @@ Consequência: waypoints podem sair até 1.5 studs do que a engine devolveu; fat
 
 ## D-019 — O waypoint Jump é o DESTINO do salto, não a decolagem
 Data: 2026-09-20
-Contexto: a ESPEC supunha que Action = Jump marca a decolagem ([VALIDAR] nº 1). O blockedAt de
+Contexto: a implementação de referência supunha que Action = Jump marca a decolagem ([VALIDAR] nº 1). O blockedAt de
 um corridor_too_narrow caiu na face de uma mureta: a rota tinha um segmento Walk -> Jump
 atravessando o obstáculo. É também o padrão documentado pela Roblox.
 Decisão: o segmento que chega a um waypoint Jump é o voo e não é validado como caminhada; o
@@ -258,7 +258,7 @@ nunca é suspeito.
 
 ## D-025 — timeout é um orçamento interno, não uma opção
 Data: 2026-09-20
-Contexto: o contrato tem timeout {elapsed}, mas as opções (Seção 3.5) são congeladas.
+Contexto: o contrato tem timeout {elapsed}, mas as opções são congeladas.
 Decisão: falha com timeout quando elapsed > 45 + 4 x (maior rota adotada) / WalkSpeed. Recomeça
 quando um alvo móvel se afasta e não conta o tempo suspenso. Constantes em Agent._tuning (testes).
 Motivo: rede de segurança para o agente que anda mas nunca chega.

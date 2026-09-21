@@ -1,7 +1,7 @@
 --!strict
 -- Agent.luau
--- Agente persistente (nível 1 da API, Seção 3.2 do plano) e máquina de estados que junta o
--- RouteSolver, o Predictor e o JumpExecutor (Seção 7 da ESPEC_NAVEGACAO_ROBLOX.md, Fase 4).
+-- Agente persistente (nível 1 da API) e máquina de estados que junta o RouteSolver, o
+-- Predictor e o JumpExecutor.
 --
 -- Estados: Idle -> Following -> (DirectJump ->) Airborne -> Following ... -> Idle | Failed.
 --   Following : segue os waypoints com Humanoid:Move, sonda reativa de salto, anti-stuck.
@@ -38,8 +38,8 @@ local WALK = Enum.PathWaypointAction.Walk
 local JUMP = Enum.PathWaypointAction.Jump
 local CUSTOM = Enum.PathWaypointAction.Custom
 
--- Constantes internas, da ESPEC de referência (NavConfig.Defaults). Não fazem parte da tabela
--- de Options pública (Seção 3.5, congelada).
+-- Constantes internas (valores de referência). Não fazem parte da tabela de Options pública,
+-- que é estável.
 local ARRIVE_RADIUS = 1.25 -- distância plana para considerar um waypoint alcançado
 local STUCK_TIME = 1.0 -- sem progresso por este tempo = uma tentativa de anti-stuck
 local STUCK_MIN_PROGRESS = 0.6 -- deslocamento que conta como progresso
@@ -111,7 +111,7 @@ local DRAWN_BY_AGENT: { [string]: boolean } = {
 	[Errors.Timeout] = true,
 }
 
--- Tempo máximo de uma movimentação (código `timeout`). Não é opção pública (Seção 3.5 congelada):
+-- Tempo máximo de uma movimentação (código `timeout`). Não é opção pública (a tabela de opções é estável):
 -- orçamento = BASE + FACTOR x (maior rota adotada) / WalkSpeed. BASE cobre a janela de espera
 -- por bloqueio (30 s) com folga; FACTOR tolera um agente bem mais lento que o ideal. Exposto em
 -- Agent._tuning só para os testes encurtarem.

@@ -1,6 +1,6 @@
 --!strict
 -- RouteSolver.luau
--- Escada de raio adaptativo + validação por Spherecast no raio físico (Fase 2 do plano).
+-- Escada de raio adaptativo + validação por Spherecast no raio físico.
 -- Transforma o NoPath do PathfindingService em rota utilizável em ambientes fechados, sem
 -- nunca recomendar uma rota onde o corpo não cabe (D-002).
 --
@@ -12,7 +12,7 @@
 --   5. sem rota: tenta AgentCanJump = false, depois um destino aproximado;
 --   6. se tudo falhar, devolve o erro diagnóstico mais específico possível.
 --
--- Todo ComputeAsync passa pelo Scheduler. `solve` DÁ YIELD (é bloqueante, regra 6).
+-- Todo ComputeAsync passa pelo Scheduler. `solve` DÁ YIELD (é bloqueante).
 -- Toda falha sai por `fail` (Fase 6): se a causa é uma parte invisível colidível, o código vira
 -- invisible_collider.
 
@@ -35,13 +35,13 @@ local WALK = Enum.PathWaypointAction.Walk
 
 -- ===== Constantes (origem indicada em cada uma) =====
 
--- ESPEC NavConfig.Defaults.Stabilizer: origem = chão + este offset.
+-- Origem = chão + este offset.
 local START_HEIGHT_OFFSET = 1
--- ESPEC Stabilizer.MaxGroundedWait: espera máxima para aterrar antes de calcular.
+-- Espera máxima para aterrar antes de calcular.
 local MAX_GROUNDED_WAIT = 1.5
--- ESPEC Agent:_groundedPosition: o raio do chão sob o root tem alcance Height + 6.
+-- O raio do chão sob o root tem alcance Height + 6.
 local GROUND_PROBE_EXTRA = 6
--- ESPEC: WaypointSpacing = math.huge -> só waypoints essenciais (estabilidade).
+-- WaypointSpacing = math.huge -> só waypoints essenciais (estabilidade).
 local WAYPOINT_SPACING = math.huge
 
 -- Normalização do destino. O raio de projeção parte um pouco acima do destino para não

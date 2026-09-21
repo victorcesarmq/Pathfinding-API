@@ -2,9 +2,8 @@
 -- SmartPathTests (init.luau)
 -- Harness de verificação manual dos critérios de aceite de cada fase. NÃO faz parte da
 -- biblioteca — não é requerido pelo SmartPath em nenhum momento, é ferramenta de
--- validação para você rodar no Command Bar durante o Play mode (Seção 8 do
--- SMARTPATH_PLANO_DE_EXECUCAO.md: "rode os critérios de aceite você mesmo, não aceite
--- 'testei e funciona' sem ver").
+-- validação para você rodar no Command Bar durante o Play mode: rode os critérios de aceite
+-- você mesmo e não aceite "testei e funciona" sem ver o Output.
 --
 -- Uso (Command Bar, em Play mode, no servidor):
 --   require(game.ServerStorage.SmartPathTests).Phase1()
@@ -365,7 +364,7 @@ local function describeResult(wps: { any }?, reason: string?, details: { [string
 	return text .. tostring(reason) .. " " .. describe(details)
 end
 
--- A engine é mais tolerante que o plano supunha: com raio 2 ela já atravessa 4 studs.
+-- A engine é mais tolerante do que se esperava: com raio 2 ela já atravessa 4 studs.
 -- Por isso testamos 4 e 3 (onde a engine falha de fato, o cenário discrimina).
 local function testCorridorPasses(width: number): boolean
 	local wps, reason, details, baseline, start, goal = runCorridor(width)

@@ -2,7 +2,7 @@
 -- Signal.luau
 -- Wrapper leve sobre BindableEvent (:Connect, :Fire, :Wait, :Destroy). Existe para que
 -- :Destroy() em qualquer objeto da lib desconecte 100% das conexões a partir de um único
--- ponto (regra 3 do plano) sem expor o BindableEvent bruto — quem consome um sinal público
+-- ponto sem expor o BindableEvent bruto — quem consome um sinal público
 -- não deve poder chamar :Fire() nele por engano.
 
 local Signal = {}

@@ -1,7 +1,7 @@
 --!strict
 -- Simplifier.luau
 -- 1) remove duplicatas; 2) string pulling guloso com validação de volume livre E de chão
--- contínuo (Seção 3.5 da ESPEC_NAVEGACAO_ROBLOX.md, Fase 2 do plano).
+-- contínuo.
 -- Nunca remove waypoints cuja Action ≠ Walk e nunca atravessa um deles num atalho.
 --
 -- Custo: O(n²) em raycasts no pior caso. Com WaypointSpacing = math.huge o n é pequeno
@@ -24,7 +24,7 @@ export type Context = {
 	groundProbeUp: number,
 }
 
--- Constantes da ESPEC de referência (NavConfig.Defaults.Stabilizer).
+-- Constantes de referência.
 local DEDUP_DISTANCE = 0.5 -- waypoints Walk mais próximos que isso são o mesmo ponto
 local PROBE_HEIGHT = 2.5 -- altura acima do chão onde a esfera viaja (tronco)
 local FLOOR_STEP = 2 -- espaçamento das amostras de chão ao longo do segmento

@@ -1,8 +1,8 @@
 --!strict
 -- Config.luau
--- Defaults da API pública (Seção 3.5 do plano, CONGELADA) + merge profundo + derivação
+-- Defaults da API pública (a tabela de opções é estável) + merge profundo + derivação
 -- a partir do personagem. `nil` num campo de Options sempre significa "default ou
--- derivado do personagem" (regra 1: zero configuração obrigatória).
+-- derivado do personagem" (zero configuração obrigatória).
 
 local Types = require(script.Parent.Types)
 local Util = require(script.Parent.Util)

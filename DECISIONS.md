@@ -1,7 +1,6 @@
 # DECISIONS
 
-Registro de decisões de design não triviais da SmartPath (Seção 9 do
-`SMARTPATH_PLANO_DE_EXECUCAO.md`). Toda entrada nova também deve ser refletida em
+Registro de decisões de design não triviais da SmartPath. Toda entrada nova também deve ser refletida em
 `src/SmartPath/DECISIONS.luau`.
 
 ## D-001 — Origem não é parâmetro da API
@@ -36,9 +35,9 @@ próprios).
 Data: 2026-09-20
 Contexto: gerar `PathfindingLink` automaticamente (baker) resolveria salto de forma mais
 barata em runtime que a predição balística.
-Decisão: não implementar na v1; registrado como Fase 10 do plano.
+Decisão: não implementar na v1; registrado como v2 (Fase 10).
 Motivo: é a peça mais valiosa e mais trabalhosa do projeto — misturá-la à v1 arrisca inflar
-o escopo e atrasar o lançamento (ver Seção 10, risco "Escopo infla").
+o escopo e atrasar o lançamento.
 Consequência: a v1 depende de predição em runtime (`SmartPath.Predictor`) para saltos não
 mapeados por level design.
 
@@ -49,22 +48,22 @@ Decisão: a única alteração permitida no mapa é criar/remover `PathfindingMo
 forma reversível e desligável por opção (`Geometry.AutoFilter`). `CanCollide`, `Transparency`
 e `Anchored` nunca são tocados.
 Motivo: mudar `CanCollide` automaticamente altera a física do jogo do consumidor de formas
-que ele não pediu e não consegue prever; é regra permanente (Seção 5, regra 4).
+que ele não pediu e não consegue prever; é regra permanente.
 Consequência: partes invisíveis colidíveis não classificadas ficam listadas em
 `Geometry.audit()` para o desenvolvedor etiquetar manualmente.
 
 ## D-006 — Geometry é global; AutoFilter/RequireNameMatch não são por agente
 Data: 2026-09-20
-Contexto: a Options.Geometry pública (Seção 3.5) tem `AutoFilter`/`RequireNameMatch` na
+Contexto: a Options.Geometry pública tem `AutoFilter`/`RequireNameMatch` na
 tabela de opções de cada agente, mas `PathfindingModifier` é um efeito de mundo — não dá
 para um agente ver uma parte como atravessável e outro não, a navmesh é uma só.
-Decisão: `Geometry` é o singleton documentado (regra 2) e mantém um único estado global de
+Decisão: `Geometry` é o singleton documentado e mantém um único estado global de
 classificação por ambiente (cliente/servidor). `Geometry.setAutoFilter`/`setRequireNameMatch`
 mudam esse estado global; quando um agente (Fase 4) definir `Options.Geometry` diferente de
 outro já ativo, o último a chamar `setAutoFilter`/`setRequireNameMatch` decide para todos —
 não existe "visão de mundo" por agente.
 Motivo: qualquer alternativa exigiria estado por agente sobre uma feature que é
-inerentemente de mundo compartilhado (regra 4: só criamos/removemos `PathfindingModifier`
+inerentemente de mundo compartilhado (só criamos/removemos `PathfindingModifier`
 de forma global e reversível).
 Consequência: tags `NavSolid`/`NavIgnore` continuam funcionando independente do AutoFilter
 (são intenção explícita do desenvolvedor, nunca desligam); só a heurística de auto-detecção
@@ -72,9 +71,9 @@ por Transparency+nome é afetada pelo toggle global.
 
 ## D-007 — Prioridade do Scheduler: número maior = mais urgente
 Data: 2026-09-20
-Contexto: o plano não especifica a direção da prioridade numérica do `Scheduler.submit`.
+Contexto: a direção da prioridade numérica do `Scheduler.submit` não estava especificada.
 Decisão: número maior é processado primeiro; em empate, o pedido mais antigo (FIFO) vence.
-Motivo: `Options.Scheduler.Priority` (Seção 3.5) tem default `0` — um valor neutro que faz
+Motivo: `Options.Scheduler.Priority` tem default `0` — um valor neutro que faz
 mais sentido como "meio da escala" se prioridades mais urgentes forem positivas e crescentes
 (ex.: jogador em perigo = prioridade alta) do que se a escala fosse invertida.
 Consequência: quem chamar `Scheduler.submit` com prioridade alta (ex.: 10) é atendido antes
@@ -86,7 +85,7 @@ Data: 2026-09-20
 Contexto: o critério de aceite exige waypoints idênticos em chamadas repetidas com a mesma
 origem/destino, e o nível 0 (`GetRoute`/`MoveTo`) não tem agente para guardar cache.
 Decisão: `RouteSolver` mantém um `RouteCache` compartilhado por ambiente (cliente/servidor),
-ao lado de `Scheduler` e `Geometry` como singleton documentado (regra 2). As chaves incluem
+ao lado de `Scheduler` e `Geometry` como singleton documentado. As chaves incluem
 um perfil (raio, altura, salto, escada), então agentes de tamanhos diferentes não se misturam.
 Agentes (Fase 4) podem passar o próprio cache para `RouteSolver.solve`.
 Motivo: sem cache compartilhado, chamadas de nível 0 nunca teriam determinismo, e NPCs indo ao
@@ -100,7 +99,7 @@ Contexto: `Agent.Radius` é derivado do bounding box do personagem (Fase 0), que
 e pernas que não colidem com o Humanoid. Validar com esse raio recusaria um corredor de 4
 studs que o corpo atravessa folgado — justamente o caso que a lib existe para resolver.
 Decisão: o `Spherecast` de validação (RouteSolver e Simplifier) usa `Util.getBodyRadius` =
-`Agent.Radius * 0.6`, a mesma proporção da ESPEC de referência (sonda de 1.2 para raio 2).
+`Agent.Radius * 0.6`, a mesma proporção da implementação de referência (sonda de 1.2 para raio 2).
 Motivo: o raio do `CreatePath` é uma folga de navegação; o de validação deve ser o físico.
 Consequência: `requiredRadius` no erro `corridor_too_narrow` é convertido de volta para a
 escala de `Agent.Radius` (raio que cabe / 0.6), para ser comparável com `agentRadius`.
@@ -129,7 +128,7 @@ Motivo: o risco que D-002 queria evitar (recomendar rota onde o personagem não 
 também no raio cheio.
 Consequência: uma passada de `Spherecast` por segmento em toda rota nova (o resultado vai
 para o cache). Risco: waypoints de canto encostados na parede podem reprovar rotas que caberiam
-se centralizadas (ver BACKLOG.md). A premissa do plano de que "AgentRadius infla obstáculos e
+se centralizadas (ver BACKLOG.md). A premissa inicial de que "AgentRadius infla obstáculos e
 faz corredores estreitos sumirem" vale menos do que o esperado nesta engine: o ganho da
 escada de raio aparece em vãos de ~1 stud, ou onde o raio configurado é maior que o do rig.
 
@@ -150,9 +149,9 @@ Data: 2026-09-20
 Contexto: o modo Native altera `JumpHeight`/`JumpPower` do Humanoid e precisa devolver o valor
 original em qualquer cenário: pouso, morte no ar, personagem removido, ou um segundo salto
 encadeado antes de o primeiro restaurar (o segundo capturaria o valor já alterado e o
-restauraria errado para sempre, que é o defeito da implementação de referência da ESPEC).
+restauraria errado para sempre, que é o defeito da implementação de referência).
 Decisão: `JumpExecutor` mantém uma tabela de chaves fracas `Humanoid -> {original, conexões}`,
-mais um singleton documentado (regra 2). O original é capturado uma vez só; um salto encadeado
+mais um singleton documentado. O original é capturado uma vez só; um salto encadeado
 reaproveita o do registro. A restauração dispara por Freefall/Landed, `Died`, `Destroying`,
 remoção do pai e por um timeout de 1s, e é idempotente.
 Motivo: sem estado compartilhado entre chamadas não há como saber qual é o valor original.
@@ -161,7 +160,7 @@ restaurado sobrescreve a alteração dele; janela curta e improvável.
 
 ## D-014 — O apex do salto é dimensionado pela profundidade; corredor aéreo depois da balística
 Data: 2026-09-20
-Contexto: a ESPEC usa o apex mínimo (altura de clareza + 0.6) e exige `walkSpeed * (tDown -
+Contexto: a implementação de referência usa o apex mínimo (altura de clareza + 0.6) e exige `walkSpeed * (tDown -
 tUp) >= profundidade + 2 * AgentRadius`. Com raio 2, isso reprova até uma mureta de 3 studs
 com 1.5 de profundidade (tempo acima do obstáculo de ~0.16s dá 2.5 studs, contra 6 exigidos),
 mesmo o humanoid podendo saltar mais alto e ficar mais tempo no ar.
@@ -192,7 +191,7 @@ Consequência: `SmartPath.MoveTo` (nível 0) devolve `false, "cancelled"` nesses
 
 ## D-016 — O passo do Agent roda em PreSimulation, não em Heartbeat
 Data: 2026-09-20
-Contexto: a ESPEC usa Heartbeat. No cliente, o ControlModule do jogador chama `Humanoid:Move`
+Contexto: a implementação de referência usa Heartbeat. No cliente, o ControlModule do jogador chama `Humanoid:Move`
 em RenderStepped, que ocorre antes da física; um `Move` dado só no Heartbeat (depois da física)
 seria sobrescrito por ele antes de ser usado.
 Decisão: `_step` roda em `RunService.PreSimulation` (existe em cliente e servidor), depois do
@@ -228,7 +227,7 @@ próprios e precisam ser validados em mapas reais.
 
 ## D-019 — O waypoint `Jump` é o DESTINO do salto, não a decolagem
 Data: 2026-09-20
-Contexto: a ESPEC supunha que `Action = Jump` marca o ponto de decolagem e listava isso como
+Contexto: a implementação de referência supunha que `Action = Jump` marca o ponto de decolagem e listava isso como
 `[VALIDAR]` nº 1. No percurso do teste do Agent, o `blockedAt` do `corridor_too_narrow` caiu
 exatamente na face da mureta (x = 24, y = 2.5): a rota tinha um segmento `Walk -> Jump`
 atravessando o obstáculo, ou seja, o waypoint Jump ficava do outro lado dele. Isso também é o
@@ -239,7 +238,7 @@ waypoint Jump, e repete a tentativa a cada frame se ainda não deu (cooldown, no
 que partem de um `Custom` também não são validados.
 Motivo: com a suposição antiga, toda rota da engine com um salto era reprovada como
 `corridor_too_narrow`, e o agente saltaria tarde demais (já em cima do obstáculo).
-Consequência: resolve o item 1 da seção 12 da ESPEC. Ainda [VALIDAR] a semântica de `Custom`.
+Consequência: resolve uma dúvida da versão inicial do projeto. Ainda [VALIDAR] a semântica de `Custom`.
 
 ## D-020 — A validação de volume varre o terreno, não uma reta 3D
 Data: 2026-09-20
@@ -336,7 +335,7 @@ limite de mapa declarado.
 
 ## D-025 — `timeout` é um orçamento interno, não uma opção
 Data: 2026-09-20
-Contexto: o código `timeout {elapsed}` existe no contrato, mas a tabela de opções (Seção 3.5) é
+Contexto: o código `timeout {elapsed}` existe no contrato, mas a tabela de opções é
 congelada e não tem campo de tempo máximo.
 Decisão: o `Agent` guarda o instante em que a movimentação começou e falha com `timeout` quando
 `elapsed > 45 + 4 x (maior rota adotada) / WalkSpeed`. O orçamento recomeça quando um alvo móvel
@@ -349,7 +348,7 @@ pode precisar de mais tempo e não tem como pedir (registrado em `BACKLOG.md`).
 
 ## D-026 — Debug em módulo próprio, painel explícito, `explain` em português
 Data: 2026-09-20
-Contexto: os desenhos de debug estavam em `Util` (dois pontos e uma rota) e o plano pede mais:
+Contexto: os desenhos de debug estavam em `Util` (dois pontos e uma rota) e era preciso mais:
 waypoints por ação, decolagem, pouso, obstáculo, raio efetivo, painel.
 Decisão: (1) `Debug.luau` concentra pasta, partes, linhas, disco de raio, marcas de obstáculo e
 falha e o painel; `Util.drawPoint/drawRoute/getDebugFolder` foram removidos. Nada aqui roda com
@@ -359,13 +358,13 @@ segunda barreira a pasta entra em todo `RaycastParams` da lib (`Geometry.addExcl
 sobe a versão para o `Agent` reconstruir seus params). (3) O painel
 (`SmartPath.Debug.showPanel(agent, parent?)`) só existe quando o desenvolvedor o chama, não por
 `Options.Debug`; no cliente o pai é o `PlayerGui`, no servidor não há tela e o pai é obrigatório.
-(4) `SmartPath.explain` devolve texto em português (o exemplo do plano está em português) e nunca
+(4) `SmartPath.explain` devolve texto em português (os exemplos de mensagem do projeto estão em português) e nunca
 erra: details ausente, incompleto ou de tipo errado e código desconhecido viram frase. (5)
 `MoveTo` e `GetRoute` passam a devolver `details` como terceiro valor (quem lê só `ok, reason` não
 percebe): sem ele o nível 0 não teria como chamar `explain`.
 Motivo: um erro só é útil se dá para agir sobre ele; o desenho mostra onde, o `explain` diz o quê.
 Consequência: `requiredRadius` em `corridor_too_narrow` é o maior raio de agente que CABERIA (o
-nome vem do plano), e `explain` o diz assim ("só comporta um agente de raio até X"). O texto é
+o nome foi herdado da especificação inicial), e `explain` o diz assim ("só comporta um agente de raio até X"). O texto é
 uma tabela de funções em `Diagnostics.luau`, pronta para tradução. O `Scheduler` ainda faz `warn`
 incondicional quando um job lança erro (é bug, não fluxo normal; ver `BACKLOG.md`).
 
@@ -548,7 +547,7 @@ Data: 2026-09-21
 Contexto: a rota é uma poligonal e o agente anda reto até cada waypoint, virando de uma vez no canto.
 O usuário pediu curvas, sem alterar o funcionamento existente.
 Decisão: campo novo e ADITIVO `Stability.Curves` (boolean, padrão `false`), autorizado pelo dono (a tabela
-de opções da Seção 3.5 era congelada). Com ele ligado, `Agent._aimPoint` mira num ponto adiante NA ROTA
+de opções era congelada). Com ele ligado, `Agent._aimPoint` mira num ponto adiante NA ROTA
 (`WalkSpeed x 0.3` studs, entre 3 e 8), em vez do waypoint atual; o ponto para no primeiro waypoint
 "duro" (o que antecede um salto ou link, o próprio Jump/Custom e o último), então decolagens e a chegada
 continuam exatas. A distância é validada a cada `PROBE_INTERVAL` por um `Spherecast` do corpo (0.6 x o

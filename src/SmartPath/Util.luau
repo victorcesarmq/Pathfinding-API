@@ -1,15 +1,14 @@
 --!strict
 -- Util.luau
 -- Geometria, física e normalização de personagem usadas pelo resto da SmartPath.
--- Números mágicos ficam em Config; aqui só fórmulas e leitura de estado do jogo
--- (Seção 1.3 e 3.3 da ESPEC_NAVEGACAO_ROBLOX.md).
+-- Números mágicos ficam em Config; aqui só fórmulas e leitura de estado do jogo.
 
 local Types = require(script.Parent.Types)
 
 local Util = {}
 local UP = Vector3.yAxis
 
--- ===== Normalização de personagem (regra 11: aceitar Model, Humanoid ou BasePart) =====
+-- ===== Normalização de personagem (aceitar Model, Humanoid ou BasePart) =====
 
 function Util.resolveHumanoid(characterLike: Types.CharacterLike): Humanoid?
 	if typeof(characterLike) ~= "Instance" then
@@ -95,7 +94,7 @@ function Util.getAgentRadius(character: Model): number
 		return character:GetBoundingBox()
 	end)
 	if not ok then
-		return 2 -- default do NavConfig de referência (R15 ≈ 1.5–2)
+		return 2 -- default (R15 ≈ 1.5–2)
 	end
 	return math.max((size :: Vector3).X, (size :: Vector3).Z) / 2
 end
@@ -111,8 +110,8 @@ function Util.getAgentHeight(character: Model): number
 end
 
 -- Raio físico do corpo, usado para validar volume livre (Spherecast). Agent.Radius vem do
--- bounding box e inclui braços/pernas que não colidem com o Humanoid; a ESPEC de
--- referência usa 1.2 de sonda para Agent.Radius 2 (SmoothingProbeRadius), ou seja, 0.6x.
+-- bounding box e inclui braços/pernas que não colidem com o Humanoid; a implementação de
+-- referência usa 1.2 de sonda para Agent.Radius 2, ou seja, 0.6x.
 -- Ver D-009 em DECISIONS.md.
 Util.BODY_RADIUS_RATIO = 0.6
 
@@ -120,7 +119,7 @@ function Util.getBodyRadius(agentRadius: number): number
 	return agentRadius * Util.BODY_RADIUS_RATIO
 end
 
--- ===== Física de salto (Seção 1.3 da ESPEC) =====
+-- ===== Física de salto =====
 
 function Util.getMaxJumpHeight(humanoid: Humanoid): number
 	if humanoid.UseJumpPower then
@@ -150,7 +149,7 @@ function Util.pathLength(waypoints: { Types.Waypoint }, fromPos: Vector3, startI
 	return total
 end
 
--- ===== Debug (regra 10: só sob options.Debug, sempre prefixado; o desenho fica em Debug.luau) =====
+-- ===== Debug (só sob options.Debug, sempre prefixado; o desenho fica em Debug.luau) =====
 
 function Util.debugPrint(enabled: boolean, ...: any)
 	if not enabled then

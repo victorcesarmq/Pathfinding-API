@@ -1,6 +1,6 @@
 --!strict
 -- Types.luau
--- Tipos compartilhados da SmartPath (Seção 3 do plano de execução). Este módulo não
+-- Tipos compartilhados da SmartPath. Este módulo não
 -- expõe valores de runtime além de uma tabela vazia — `export type` é a única razão
 -- dele existir.
 
@@ -49,8 +49,8 @@ export type SchedulerOptions = {
 	Priority: number?,
 }
 
--- Tabela de opções da Seção 3.5. Todo campo é opcional; `nil` sempre significa
--- "derive do personagem ou use o default" (regra 1: zero configuração obrigatória).
+-- Tabela de opções. Todo campo é opcional; `nil` sempre significa
+-- "derive do personagem ou use o default" (zero configuração obrigatória).
 export type Options = {
 	Indoor: IndoorOptions?,
 	Jump: JumpOptions?,
@@ -97,10 +97,10 @@ export type ResolvedOptions = {
 
 export type AgentState = "Idle" | "Following" | "DirectJump" | "Airborne" | "Failed"
 
--- aceito onde a API pede um personagem (regra 11): normalizado internamente por Util.
+-- aceito onde a API pede um personagem: normalizado internamente por Util.
 export type CharacterLike = Model | Humanoid | BasePart
 
--- aceito onde a API pede um destino (Seção 3.1).
+-- aceito onde a API pede um destino.
 export type TargetLike = Vector3 | BasePart | Model
 
 return {}

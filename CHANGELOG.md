@@ -52,13 +52,13 @@ não foi validado num jogo real.
 ## Histórico de desenvolvimento (por fase, antes da 1.0.0)
 
 ### Added — Fase 0 (fundação e esqueleto)
-- Estrutura de módulos da SmartPath em `ReplicatedStorage.SmartPath` (Seção 4 do plano).
+- Estrutura de módulos da SmartPath em `ReplicatedStorage.SmartPath`.
 - `Types`, `Errors`, `Signal`, `Config`, `Util` implementados.
 - `Config.resolve` deriva raio, altura, `WalkSpeed` e `JumpHeight` real (considerando
   `UseJumpPower`) a partir do personagem.
 - Demais módulos (`Scheduler`, `Geometry`, `RouteCache`, `Simplifier`, `RouteSolver`,
   `Predictor`, `JumpExecutor`, `Agent`, `Compat`) como stubs tipados.
-- Fachada `init` expondo a API da Seção 3: `MoveTo`, `MoveToAsync`, `GetRoute`, `new`,
+- Fachada `init` expondo a API: `MoveTo`, `MoveToAsync`, `GetRoute`, `new`,
   `Service`, `Version`, e o nível 2 (`Predictor`, `Simplifier`, `Geometry`, `Scheduler`,
   `Errors`).
 - `Version = "0.1.0"`.

@@ -1,6 +1,6 @@
 --!strict
 -- Compat.luau
--- Camada de compatibilidade que espelha o PathfindingService (Seção 3.4 do plano, Fase 5).
+-- Camada de compatibilidade que espelha o PathfindingService.
 -- Objetivo: um script existente passa a usar a SmartPath trocando UMA linha, a do require:
 --
 --   local PathfindingService = game:GetService("PathfindingService")   -- antes
